@@ -7,35 +7,93 @@ const { parseVoiceTranscript, classifyIntent, generateDynamicReply, isPronounOrF
 const authMiddleware = require('../middleware/auth');
 
 // In-memory fallback databases when MongoDB is not connected
-let mockProducts = [
-  { _id: 'mock_p1', name: 'rice', quantity: 12, unit: 'bags', updatedAt: new Date().toISOString() },
-  { _id: 'mock_p2', name: 'flour', quantity: 4, unit: 'bags', updatedAt: new Date().toISOString() },
-  { _id: 'mock_p3', name: 'milk', quantity: 0, unit: 'bottles', updatedAt: new Date().toISOString() },
-  { _id: 'mock_p4', name: 'sugar', quantity: 45, unit: 'kg', updatedAt: new Date().toISOString() }
-];
+let mockProducts = [];
+let mockLogs = [];
 
-let mockLogs = [
-  {
-    _id: 'mock_l1',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
-    originalTranscript: 'Added 12 bags of rice',
-    parsedAction: 'ADD_STOCK',
-    calculationDetail: '🎙️ Spoke: \'Added 12 bags of rice\' -> Action: Added +12 -> New Total: 12 Bags',
-    targetProduct: 'rice',
-    quantityChanged: 12,
-    finalQuantity: 12
-  },
-  {
-    _id: 'mock_l2',
-    timestamp: new Date(Date.now() - 7200000).toISOString(),
-    originalTranscript: 'Set sugar to 45 kg',
-    parsedAction: 'SET_STOCK',
-    calculationDetail: '🎙️ Spoke: \'Set sugar to 45 kg\' -> Action: Set to 45 -> New Total: 45 Kg',
-    targetProduct: 'sugar',
-    quantityChanged: 45,
-    finalQuantity: 45
+// Helper to seed default mock products and logs for a specific userId
+const ensureMockProductsSeeded = (userId) => {
+  if (userId !== 'mock_user_123') return;
+  const userProducts = mockProducts.filter(p => p.userId === userId);
+  if (userProducts.length === 0) {
+    const defaultMockProducts = [
+      { _id: 'mock_p1_' + userId, name: 'rice', quantity: 12, unit: 'bags', price: 80, userId, updatedAt: new Date().toISOString() },
+      { _id: 'mock_p2_' + userId, name: 'flour', quantity: 4, unit: 'bags', price: 40, userId, updatedAt: new Date().toISOString() },
+      { _id: 'mock_p3_' + userId, name: 'milk', quantity: 0, unit: 'bottles', price: 25, userId, updatedAt: new Date().toISOString() },
+      { _id: 'mock_p4_' + userId, name: 'sugar', quantity: 45, unit: 'kg', price: 15, userId, updatedAt: new Date().toISOString() }
+    ];
+    mockProducts.push(...defaultMockProducts);
+    
+    const defaultMockLogs = [
+      {
+        _id: 'mock_l1_' + userId,
+        userId,
+        timestamp: new Date(Date.now() - 3600000).toISOString(),
+        originalTranscript: 'Added 12 bags of rice',
+        parsedAction: 'ADD_STOCK',
+        calculationDetail: '🎙️ Spoke: \'Added 12 bags of rice\' -> Action: Added +12 -> New Total: 12 Bags',
+        targetProduct: 'rice',
+        quantityChanged: 12,
+        finalQuantity: 12
+      },
+      {
+        _id: 'mock_l2_' + userId,
+        userId,
+        timestamp: new Date(Date.now() - 7200000).toISOString(),
+        originalTranscript: 'Set sugar to 45 kg',
+        parsedAction: 'SET_STOCK',
+        calculationDetail: '🎙️ Spoke: \'Set sugar to 45 kg\' -> Action: Set to 45 -> New Total: 45 Kg',
+        targetProduct: 'sugar',
+        quantityChanged: 45,
+        finalQuantity: 45
+      }
+    ];
+    mockLogs.push(...defaultMockLogs);
   }
-];
+};
+
+// Helper to seed default products and logs in MongoDB for the guest demo user
+const ensureMongoDemoProductsSeeded = async (userId) => {
+  if (userId !== 'mock_user_123') return;
+  try {
+    const productCount = await Product.countDocuments({ userId });
+    if (productCount === 0) {
+      const defaultProducts = [
+        { name: 'rice', quantity: 12, unit: 'bags', price: 80, userId, updatedAt: new Date() },
+        { name: 'flour', quantity: 4, unit: 'bags', price: 40, userId, updatedAt: new Date() },
+        { name: 'milk', quantity: 0, unit: 'bottles', price: 25, userId, updatedAt: new Date() },
+        { name: 'sugar', quantity: 45, unit: 'kg', price: 15, userId, updatedAt: new Date() }
+      ];
+      await Product.insertMany(defaultProducts);
+      
+      const defaultLogs = [
+        {
+          userId,
+          timestamp: new Date(Date.now() - 3600000),
+          originalTranscript: 'Added 12 bags of rice',
+          parsedAction: 'ADD_STOCK',
+          calculationDetail: "🎙️ Spoke: 'Added 12 bags of rice' -> Action: Added +12 -> New Total: 12 Bags",
+          targetProduct: 'rice',
+          quantityChanged: 12,
+          finalQuantity: 12
+        },
+        {
+          userId,
+          timestamp: new Date(Date.now() - 7200000),
+          originalTranscript: 'Set sugar to 45 kg',
+          parsedAction: 'SET_STOCK',
+          calculationDetail: "🎙️ Spoke: 'Set sugar to 45 kg' -> Action: Set to 45 -> New Total: 45 Kg",
+          targetProduct: 'sugar',
+          quantityChanged: 45,
+          finalQuantity: 45
+        }
+      ];
+      await AuditLog.insertMany(defaultLogs);
+      console.log('Successfully seeded MongoDB collections for demo user mock_user_123');
+    }
+  } catch (err) {
+    console.error('Error seeding MongoDB demo products/logs:', err);
+  }
+};
 
 // Helper to check if Mongoose is connected to a live database
 const isDbConnected = () => {
@@ -48,6 +106,9 @@ const getFreshProductsAndSummaries = async (userId) => {
   let summaries = [];
   
   if (isDbConnected()) {
+    if (userId === 'mock_user_123') {
+      await ensureMongoDemoProductsSeeded(userId);
+    }
     products = await Product.find({ userId }).sort({ name: 1 });
     const rawSummaries = await AuditLog.aggregate([
       { $match: { userId } },
@@ -56,9 +117,11 @@ const getFreshProductsAndSummaries = async (userId) => {
     ]);
     summaries = rawSummaries.map(s => ({ date: s._id, count: s.count }));
   } else {
-    products = [...mockProducts].sort((a, b) => a.name.localeCompare(b.name));
+    ensureMockProductsSeeded(userId);
+    products = mockProducts.filter(p => p.userId === userId).sort((a, b) => a.name.localeCompare(b.name));
+    
     const counts = {};
-    mockLogs.forEach(log => {
+    mockLogs.filter(log => log.userId === userId).forEach(log => {
       const dateStr = new Date(log.timestamp).toISOString().split('T')[0];
       counts[dateStr] = (counts[dateStr] || 0) + 1;
     });
@@ -80,6 +143,9 @@ router.get('/products', authMiddleware, async (req, res) => {
     let productsList = [];
     
     if (isDbConnected()) {
+      if (userId === 'mock_user_123') {
+        await ensureMongoDemoProductsSeeded(userId);
+      }
       let query = { userId };
       if (search) {
         query.name = { $regex: search, $options: 'i' };
@@ -87,7 +153,8 @@ router.get('/products', authMiddleware, async (req, res) => {
       productsList = await Product.find(query).sort({ name: 1 });
     } else {
       // Use mock fallback
-      productsList = [...mockProducts];
+      ensureMockProductsSeeded(userId);
+      productsList = mockProducts.filter(p => p.userId === userId);
       if (search) {
         productsList = productsList.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
       }
@@ -120,10 +187,16 @@ router.get('/logs', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.uid;
     if (isDbConnected()) {
+      if (userId === 'mock_user_123') {
+        await ensureMongoDemoProductsSeeded(userId);
+      }
       const logs = await AuditLog.find({ userId }).sort({ timestamp: -1 });
       res.json(logs);
     } else {
-      const sortedMockLogs = [...mockLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      ensureMockProductsSeeded(userId);
+      const sortedMockLogs = mockLogs
+        .filter(l => l.userId === userId)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       res.json(sortedMockLogs);
     }
   } catch (error) {
@@ -138,6 +211,9 @@ router.get('/logs/summaries', authMiddleware, async (req, res) => {
     const userId = req.user.uid;
     
     if (isDbConnected()) {
+      if (userId === 'mock_user_123') {
+        await ensureMongoDemoProductsSeeded(userId);
+      }
       const summaries = await AuditLog.aggregate([
         { $match: { userId } },
         {
@@ -155,8 +231,9 @@ router.get('/logs/summaries', authMiddleware, async (req, res) => {
       }));
       res.json(formatted);
     } else {
+      ensureMockProductsSeeded(userId);
       const counts = {};
-      mockLogs.forEach(log => {
+      mockLogs.filter(log => log.userId === userId).forEach(log => {
         const dateStr = new Date(log.timestamp).toISOString().split('T')[0];
         counts[dateStr] = (counts[dateStr] || 0) + 1;
       });
@@ -180,6 +257,9 @@ router.get('/logs/details/:date', authMiddleware, async (req, res) => {
     const targetDate = req.params.date; // "YYYY-MM-DD"
     
     if (isDbConnected()) {
+      if (userId === 'mock_user_123') {
+        await ensureMongoDemoProductsSeeded(userId);
+      }
       const start = new Date(`${targetDate}T00:00:00.000Z`);
       const end = new Date(`${targetDate}T23:59:59.999Z`);
       
@@ -193,9 +273,10 @@ router.get('/logs/details/:date', authMiddleware, async (req, res) => {
       
       res.json(logs);
     } else {
+      ensureMockProductsSeeded(userId);
       const logs = mockLogs.filter(log => {
         const logDateStr = new Date(log.timestamp).toISOString().split('T')[0];
-        return logDateStr === targetDate;
+        return logDateStr === targetDate && log.userId === userId;
       }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       
       res.json(logs);
@@ -231,10 +312,14 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
     // Fetch list of existing product names for semantic alignment context
     let existingProductNames = [];
     if (isDbConnected()) {
+      if (userId === 'mock_user_123') {
+        await ensureMongoDemoProductsSeeded(userId);
+      }
       const products = await Product.find({ userId });
       existingProductNames = products.map(p => p.name);
     } else {
-      existingProductNames = mockProducts.map(p => p.name);
+      ensureMockProductsSeeded(userId);
+      existingProductNames = mockProducts.filter(p => p.userId === userId).map(p => p.name);
     }
     
     // 2. Parse the entire transcript into sequential actions (Gemini or Fallback)
@@ -333,7 +418,8 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
         
       } else {
         // Mock DB fallback sequential execution
-        let product = mockProducts.find(p => p.name === productName);
+        ensureMockProductsSeeded(userId);
+        let product = mockProducts.find(p => p.name === productName && p.userId === userId);
         if (product) {
           oldQty = product.quantity;
           if (finalUnit !== 'pcs' || product.unit === 'pcs') {
@@ -347,6 +433,7 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
             quantity: 0,
             unit: finalUnit,
             price: price || null,
+            userId,
             updatedAt: new Date().toISOString()
           };
           mockProducts.push(product);
@@ -382,7 +469,8 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
           calculationDetail,
           targetProduct: productName,
           quantityChanged,
-          finalQuantity: newQty
+          finalQuantity: newQty,
+          userId
         };
         mockLogs.unshift(auditLog);
         lastLog = auditLog;
@@ -456,7 +544,8 @@ router.post('/products/set-price', authMiddleware, async (req, res) => {
         await product.save();
       }
     } else {
-      const product = mockProducts.find(p => p.name === productName.toLowerCase().trim());
+      ensureMockProductsSeeded(userId);
+      const product = mockProducts.find(p => p.name === productName.toLowerCase().trim() && p.userId === userId);
       if (product) {
         product.price = parseFloat(price);
       }
@@ -511,7 +600,8 @@ router.post('/products', authMiddleware, async (req, res) => {
       await auditLog.save();
       savedLog = auditLog;
     } else {
-      let product = mockProducts.find(p => p.name === cleanName);
+      ensureMockProductsSeeded(userId);
+      let product = mockProducts.find(p => p.name === cleanName && p.userId === userId);
       if (product) {
         return res.status(400).json({ error: 'Product already exists. You can edit it instead.' });
       }
@@ -522,6 +612,7 @@ router.post('/products', authMiddleware, async (req, res) => {
         quantity: Number(quantity) || 0,
         unit: unit || 'pcs',
         price: price !== undefined && price !== null ? Number(price) : null,
+        userId,
         updatedAt: new Date().toISOString()
       };
       mockProducts.push(product);
@@ -534,7 +625,8 @@ router.post('/products', authMiddleware, async (req, res) => {
         calculationDetail: `📝 Manually Added -> Product: "${cleanName}", Qty: ${product.quantity} ${product.unit}, Price: ₹${product.price || '-'}`,
         targetProduct: cleanName,
         quantityChanged: product.quantity,
-        finalQuantity: product.quantity
+        finalQuantity: product.quantity,
+        userId
       };
       mockLogs.unshift(auditLog);
       savedLog = auditLog;
@@ -584,7 +676,7 @@ router.put('/products/:id', authMiddleware, async (req, res) => {
       await auditLog.save();
       savedLog = auditLog;
     } else {
-      let product = mockProducts.find(p => p._id === id);
+      let product = mockProducts.find(p => p._id === id && p.userId === userId);
       if (!product) {
         return res.status(404).json({ error: 'Product not found' });
       }
@@ -606,7 +698,8 @@ router.put('/products/:id', authMiddleware, async (req, res) => {
         calculationDetail: `📝 Manually Edited -> Product: "${product.name}", Qty: ${product.quantity} ${product.unit} (changed by ${quantityChanged}), Price: ₹${product.price || '-'}`,
         targetProduct: product.name,
         quantityChanged,
-        finalQuantity: product.quantity
+        finalQuantity: product.quantity,
+        userId
       };
       mockLogs.unshift(auditLog);
       savedLog = auditLog;
@@ -650,7 +743,7 @@ router.delete('/products/:id', authMiddleware, async (req, res) => {
       await auditLog.save();
       savedLog = auditLog;
     } else {
-      const productIndex = mockProducts.findIndex(p => p._id === id);
+      const productIndex = mockProducts.findIndex(p => p._id === id && p.userId === userId);
       if (productIndex === -1) {
         return res.status(404).json({ error: 'Product not found' });
       }
@@ -668,7 +761,8 @@ router.delete('/products/:id', authMiddleware, async (req, res) => {
         calculationDetail: `🗑️ Manually Deleted -> Product "${productName}" removed from system`,
         targetProduct: productName,
         quantityChanged: -finalQty,
-        finalQuantity: 0
+        finalQuantity: 0,
+        userId
       };
       mockLogs.unshift(auditLog);
       savedLog = auditLog;
