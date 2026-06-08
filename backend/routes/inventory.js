@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const AuditLog = require('../models/AuditLog');
-const { parseVoiceTranscript } = require('../services/geminiService');
+const { parseVoiceTranscript, classifyIntent, generateDynamicReply, isPronounOrFiller, cleanProductName } = require('../services/geminiService');
 const authMiddleware = require('../middleware/auth');
 
 // In-memory fallback databases when MongoDB is not connected
@@ -40,6 +40,35 @@ let mockLogs = [
 // Helper to check if Mongoose is connected to a live database
 const isDbConnected = () => {
   return mongoose.connection && mongoose.connection.readyState === 1;
+};
+
+// Helper to fetch fresh products and date summaries
+const getFreshProductsAndSummaries = async (userId) => {
+  let products = [];
+  let summaries = [];
+  
+  if (isDbConnected()) {
+    products = await Product.find({ userId }).sort({ name: 1 });
+    const rawSummaries = await AuditLog.aggregate([
+      { $match: { userId } },
+      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } }, count: { $sum: 1 } } },
+      { $sort: { _id: -1 } }
+    ]);
+    summaries = rawSummaries.map(s => ({ date: s._id, count: s.count }));
+  } else {
+    products = [...mockProducts].sort((a, b) => a.name.localeCompare(b.name));
+    const counts = {};
+    mockLogs.forEach(log => {
+      const dateStr = new Date(log.timestamp).toISOString().split('T')[0];
+      counts[dateStr] = (counts[dateStr] || 0) + 1;
+    });
+    summaries = Object.keys(counts).map(date => ({
+      date,
+      count: counts[date]
+    })).sort((a, b) => b.date.localeCompare(a.date));
+  }
+  
+  return { products, summaries };
 };
 
 // Get all products
@@ -86,16 +115,14 @@ router.get('/products', authMiddleware, async (req, res) => {
   }
 });
 
-// Get all audit logs
+// Get all audit logs (optional fallback)
 router.get('/logs', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.uid;
-    
     if (isDbConnected()) {
       const logs = await AuditLog.find({ userId }).sort({ timestamp: -1 });
       res.json(logs);
     } else {
-      // Return mock logs
       const sortedMockLogs = [...mockLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       res.json(sortedMockLogs);
     }
@@ -105,7 +132,81 @@ router.get('/logs', authMiddleware, async (req, res) => {
   }
 });
 
-// Process voice transcript
+// Get log summaries grouped by date
+router.get('/logs/summaries', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    
+    if (isDbConnected()) {
+      const summaries = await AuditLog.aggregate([
+        { $match: { userId } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$timestamp" } },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: -1 } }
+      ]);
+      
+      const formatted = summaries.map(s => ({
+        date: s._id,
+        count: s.count
+      }));
+      res.json(formatted);
+    } else {
+      const counts = {};
+      mockLogs.forEach(log => {
+        const dateStr = new Date(log.timestamp).toISOString().split('T')[0];
+        counts[dateStr] = (counts[dateStr] || 0) + 1;
+      });
+      
+      const formatted = Object.keys(counts).map(date => ({
+        date,
+        count: counts[date]
+      })).sort((a, b) => b.date.localeCompare(a.date));
+      res.json(formatted);
+    }
+  } catch (error) {
+    console.error('Error fetching summaries:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get log details for a specific YYYY-MM-DD date
+router.get('/logs/details/:date', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const targetDate = req.params.date; // "YYYY-MM-DD"
+    
+    if (isDbConnected()) {
+      const start = new Date(`${targetDate}T00:00:00.000Z`);
+      const end = new Date(`${targetDate}T23:59:59.999Z`);
+      
+      const logs = await AuditLog.find({
+        userId,
+        timestamp: {
+          $gte: start,
+          $lte: end
+        }
+      }).sort({ timestamp: -1 });
+      
+      res.json(logs);
+    } else {
+      const logs = mockLogs.filter(log => {
+        const logDateStr = new Date(log.timestamp).toISOString().split('T')[0];
+        return logDateStr === targetDate;
+      }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
+      res.json(logs);
+    }
+  } catch (error) {
+    console.error('Error fetching detailed logs:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Process voice transcript with sequential multi-connector execution
 router.post('/voice-command', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -115,151 +216,469 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Transcript is required' });
     }
     
-    // Parse using Gemini (or Regex fallback)
-    const parsed = await parseVoiceTranscript(transcript);
-    const { productName, actionType, numericValue, unit } = parsed;
+    // 1. Classify the entire transcript first
+    const classification = await classifyIntent(transcript);
     
-    let oldQty = 0;
-    let newQty = 0;
-    let finalUnit = unit || 'pcs';
+    if (classification.intent === 'CONVERSATION') {
+      const replyText = await generateDynamicReply(transcript);
+      return res.json({
+        success: true,
+        type: 'chat',
+        message: replyText
+      });
+    }
+    
+    // Fetch list of existing product names for semantic alignment context
+    let existingProductNames = [];
+    if (isDbConnected()) {
+      const products = await Product.find({ userId });
+      existingProductNames = products.map(p => p.name);
+    } else {
+      existingProductNames = mockProducts.map(p => p.name);
+    }
+    
+    // 2. Parse the entire transcript into sequential actions (Gemini or Fallback)
+    const parsedActions = await parseVoiceTranscript(transcript, existingProductNames);
+    
+    let productsUpdated = [];
+    let lastLog = null;
+    let activeProductName = null;
+    let lastParsed = null;
+    
+    // Execute each parsed action sequentially
+    for (const action of parsedActions) {
+      let { productName, actionType, numericValue, unit, price } = action;
+      
+      // Clean product name
+      productName = cleanProductName(productName, price);
+      
+      // Context inheritance fallback (just in case the parser missed it)
+      if (!productName || productName === 'unknown-product' || isPronounOrFiller(productName)) {
+        if (activeProductName) {
+          productName = activeProductName;
+        } else {
+          continue; // Skip unrecognized parts
+        }
+      } else {
+        activeProductName = productName;
+      }
+      
+      lastParsed = { productName, actionType, numericValue, unit };
+      
+      // Conversion Heuristic: Storing "dozen" directly as number of units (1 dozen = 12 pcs)
+      let finalQty = numericValue;
+      let finalUnit = unit || 'pcs';
+      if (unit && (unit.toLowerCase().startsWith('dozen') || unit.toLowerCase().startsWith('dozens'))) {
+        finalQty = numericValue * 12;
+        finalUnit = 'pcs';
+      }
+      
+      let oldQty = 0;
+      let newQty = 0;
+      
+      if (isDbConnected()) {
+        let product = await Product.findOne({ name: productName, userId });
+        if (product) {
+          oldQty = product.quantity;
+          if (finalUnit !== 'pcs' || product.unit === 'pcs') {
+            product.unit = finalUnit;
+          }
+          if (price) product.price = price;
+        } else {
+          product = new Product({
+            name: productName,
+            quantity: 0,
+            unit: finalUnit,
+            price: price || null,
+            userId,
+            updatedAt: new Date()
+          });
+        }
+        
+        // Calculate balance
+        if (actionType === 'ADD') {
+          newQty = oldQty + finalQty;
+        } else if (actionType === 'REMOVE') {
+          newQty = Math.max(0, oldQty - finalQty);
+        } else if (actionType === 'SET') {
+          newQty = Math.max(0, finalQty);
+        }
+        
+        product.quantity = newQty;
+        product.updatedAt = new Date();
+        await product.save();
+        
+        const quantityChanged = newQty - oldQty;
+        let parsedAction = 'SET_STOCK';
+        if (actionType === 'ADD') parsedAction = 'ADD_STOCK';
+        if (actionType === 'REMOVE') parsedAction = 'REMOVE_STOCK';
+        
+        const displayAction = actionType === 'ADD' ? `Added +${finalQty}` : 
+                              actionType === 'REMOVE' ? `Subtracted -${finalQty}` : 
+                              `Set to ${finalQty}`;
+        const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
+        const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
+        
+        const auditLog = new AuditLog({
+          originalTranscript: transcript,
+          parsedAction,
+          calculationDetail,
+          targetProduct: productName,
+          quantityChanged,
+          finalQuantity: newQty,
+          userId
+        });
+        await auditLog.save();
+        lastLog = auditLog;
+        
+      } else {
+        // Mock DB fallback sequential execution
+        let product = mockProducts.find(p => p.name === productName);
+        if (product) {
+          oldQty = product.quantity;
+          if (finalUnit !== 'pcs' || product.unit === 'pcs') {
+            product.unit = finalUnit;
+          }
+          if (price) product.price = price;
+        } else {
+          product = {
+            _id: 'mock_p_' + Math.random().toString(36).substr(2, 9),
+            name: productName,
+            quantity: 0,
+            unit: finalUnit,
+            price: price || null,
+            updatedAt: new Date().toISOString()
+          };
+          mockProducts.push(product);
+        }
+        
+        if (actionType === 'ADD') {
+          newQty = oldQty + finalQty;
+        } else if (actionType === 'REMOVE') {
+          newQty = Math.max(0, oldQty - finalQty);
+        } else if (actionType === 'SET') {
+          newQty = Math.max(0, finalQty);
+        }
+        
+        product.quantity = newQty;
+        product.updatedAt = new Date().toISOString();
+        
+        const quantityChanged = newQty - oldQty;
+        let parsedAction = 'SET_STOCK';
+        if (actionType === 'ADD') parsedAction = 'ADD_STOCK';
+        if (actionType === 'REMOVE') parsedAction = 'REMOVE_STOCK';
+        
+        const displayAction = actionType === 'ADD' ? `Added +${finalQty}` : 
+                              actionType === 'REMOVE' ? `Subtracted -${finalQty}` : 
+                              `Set to ${finalQty}`;
+        const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
+        const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
+        
+        const auditLog = {
+          _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
+          timestamp: new Date().toISOString(),
+          originalTranscript: transcript,
+          parsedAction,
+          calculationDetail,
+          targetProduct: productName,
+          quantityChanged,
+          finalQuantity: newQty
+        };
+        mockLogs.unshift(auditLog);
+        lastLog = auditLog;
+      }
+      
+      if (!productsUpdated.includes(productName)) {
+        productsUpdated.push(productName);
+      }
+    }
+    
+    // If no products were updated, return a dynamic chat warning
+    if (productsUpdated.length === 0) {
+      return res.json({
+        success: true,
+        type: 'chat',
+        message: 'Could not resolve any inventory action from the statement.'
+      });
+    }
+
+    // Read fresh lists
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    
+    // Prompt for price if any updated product is missing a price in the database and is in stock
+    let promptForPrice = null;
+    for (let name of productsUpdated) {
+      const p = products.find(prod => prod.name === name);
+      if (p && p.quantity > 0 && (p.price === undefined || p.price === null || p.price === 0)) {
+        promptForPrice = { productName: name };
+        break;
+      }
+    }
+    
+    return res.json({
+      success: true,
+      type: 'action',
+      message: 'Database updated successfully',
+      updatedData: products,
+      products,
+      summaries,
+      promptForPrice,
+      conversationalReply: null,
+      log: lastLog,
+      parsed: lastParsed || {
+        productName: 'unknown',
+        actionType: 'UNKNOWN',
+        numericValue: 0,
+        unit: 'pcs'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error processing voice command:', error);
+    res.status(500).json({ error: 'Server error processing voice command', details: error.message });
+  }
+});
+
+// Update the price of a product manually via terminal conversational flow
+router.post('/products/set-price', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { productName, price } = req.body;
+    
+    if (!productName || price === undefined || price === null) {
+      return res.status(400).json({ error: 'Product name and price are required' });
+    }
     
     if (isDbConnected()) {
-      let product = await Product.findOne({ name: productName, userId });
+      const product = await Product.findOne({ name: productName.toLowerCase().trim(), userId });
       if (product) {
-        oldQty = product.quantity;
-        product.unit = unit || product.unit;
-      } else {
-        product = new Product({
-          name: productName,
-          quantity: 0,
-          unit: finalUnit,
-          userId,
-          updatedAt: new Date()
-        });
+        product.price = parseFloat(price);
+        await product.save();
+      }
+    } else {
+      const product = mockProducts.find(p => p.name === productName.toLowerCase().trim());
+      if (product) {
+        product.price = parseFloat(price);
+      }
+    }
+    
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    res.json({ success: true, products, summaries });
+  } catch (error) {
+    console.error('Error setting price:', error);
+    res.status(500).json({ error: 'Server error setting price' });
+  }
+});
+
+// Manually add a new product
+router.post('/products', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { name, quantity, unit, price } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Product name is required' });
+    }
+    
+    const cleanName = name.toLowerCase().trim();
+    let savedLog = null;
+    
+    if (isDbConnected()) {
+      let product = await Product.findOne({ name: cleanName, userId });
+      if (product) {
+        return res.status(400).json({ error: 'Product already exists. You can edit it instead.' });
       }
       
-      // Calculate
-      if (actionType === 'ADD') {
-        newQty = oldQty + numericValue;
-      } else if (actionType === 'REMOVE') {
-        newQty = Math.max(0, oldQty - numericValue);
-      } else if (actionType === 'SET') {
-        newQty = Math.max(0, numericValue);
-      }
-      
-      product.quantity = newQty;
-      product.updatedAt = new Date();
+      product = new Product({
+        name: cleanName,
+        quantity: Number(quantity) || 0,
+        unit: unit || 'pcs',
+        price: price !== undefined && price !== null ? Number(price) : null,
+        userId,
+        updatedAt: new Date()
+      });
       await product.save();
       
-      const quantityChanged = newQty - oldQty;
-      let parsedAction = 'SET_STOCK';
-      if (actionType === 'ADD') parsedAction = 'ADD_STOCK';
-      if (actionType === 'REMOVE') parsedAction = 'REMOVE_STOCK';
-      
-      const displayAction = actionType === 'ADD' ? `Added +${numericValue}` : 
-                            actionType === 'REMOVE' ? `Subtracted -${numericValue}` : 
-                            `Set to ${numericValue}`;
-      const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
-      const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
-      
       const auditLog = new AuditLog({
-        originalTranscript: transcript,
-        parsedAction,
-        calculationDetail,
-        targetProduct: productName,
-        quantityChanged,
-        finalQuantity: newQty,
+        originalTranscript: `Manually added product "${cleanName}"`,
+        parsedAction: 'ADD_STOCK',
+        calculationDetail: `📝 Manually Added -> Product: "${cleanName}", Qty: ${product.quantity} ${product.unit}, Price: ₹${product.price || '-'}`,
+        targetProduct: cleanName,
+        quantityChanged: product.quantity,
+        finalQuantity: product.quantity,
         userId
       });
       await auditLog.save();
-      
-      const products = await Product.find({ userId }).sort({ name: 1 });
-      const logs = await AuditLog.find({ userId }).sort({ timestamp: -1 });
-      
-      return res.json({
-        success: true,
-        message: 'Database updated standardly.',
-        product: {
-          name: productName,
-          quantity: newQty,
-          unit: product.unit,
-          updatedAt: product.updatedAt
-        },
-        parsed: { productName, actionType, numericValue, unit: product.unit },
-        log: auditLog,
-        products,
-        logs
-      });
-      
+      savedLog = auditLog;
     } else {
-      // In-memory mock DB operations
-      let product = mockProducts.find(p => p.name === productName);
+      let product = mockProducts.find(p => p.name === cleanName);
       if (product) {
-        oldQty = product.quantity;
-        product.unit = unit || product.unit;
-      } else {
-        product = {
-          _id: 'mock_p_' + Math.random().toString(36).substr(2, 9),
-          name: productName,
-          quantity: 0,
-          unit: finalUnit,
-          updatedAt: new Date().toISOString()
-        };
-        mockProducts.push(product);
+        return res.status(400).json({ error: 'Product already exists. You can edit it instead.' });
       }
       
-      // Calculate
-      if (actionType === 'ADD') {
-        newQty = oldQty + numericValue;
-      } else if (actionType === 'REMOVE') {
-        newQty = Math.max(0, oldQty - numericValue);
-      } else if (actionType === 'SET') {
-        newQty = Math.max(0, numericValue);
-      }
-      
-      product.quantity = newQty;
-      product.updatedAt = new Date().toISOString();
-      
-      const quantityChanged = newQty - oldQty;
-      let parsedAction = 'SET_STOCK';
-      if (actionType === 'ADD') parsedAction = 'ADD_STOCK';
-      if (actionType === 'REMOVE') parsedAction = 'REMOVE_STOCK';
-      
-      const displayAction = actionType === 'ADD' ? `Added +${numericValue}` : 
-                            actionType === 'REMOVE' ? `Subtracted -${numericValue}` : 
-                            `Set to ${numericValue}`;
-      const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
-      const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
+      product = {
+        _id: 'mock_p_' + Math.random().toString(36).substr(2, 9),
+        name: cleanName,
+        quantity: Number(quantity) || 0,
+        unit: unit || 'pcs',
+        price: price !== undefined && price !== null ? Number(price) : null,
+        updatedAt: new Date().toISOString()
+      };
+      mockProducts.push(product);
       
       const auditLog = {
         _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
         timestamp: new Date().toISOString(),
-        originalTranscript: transcript,
-        parsedAction,
-        calculationDetail,
-        targetProduct: productName,
-        quantityChanged,
-        finalQuantity: newQty
+        originalTranscript: `Manually added product "${cleanName}"`,
+        parsedAction: 'ADD_STOCK',
+        calculationDetail: `📝 Manually Added -> Product: "${cleanName}", Qty: ${product.quantity} ${product.unit}, Price: ₹${product.price || '-'}`,
+        targetProduct: cleanName,
+        quantityChanged: product.quantity,
+        finalQuantity: product.quantity
       };
       mockLogs.unshift(auditLog);
-      
-      return res.json({
-        success: true,
-        message: 'Database updated standardly (Mock Mode).',
-        product,
-        parsed: { productName, actionType, numericValue, unit: product.unit },
-        log: auditLog,
-        products: [...mockProducts].sort((a, b) => a.name.localeCompare(b.name)),
-        logs: [...mockLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      });
+      savedLog = auditLog;
     }
     
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    res.json({ success: true, products, summaries, log: savedLog });
   } catch (error) {
-    console.error('Error processing voice command:', error);
-    res.status(500).json({ 
-      error: 'Server error processing voice command', 
-      details: error.message 
-    });
+    console.error('Error creating product:', error);
+    res.status(500).json({ error: 'Server error creating product' });
+  }
+});
+
+// Manually update/edit a product (including unit, price, and stock)
+router.put('/products/:id', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { id } = req.params;
+    const { name, quantity, unit, price } = req.body;
+    let savedLog = null;
+    
+    if (isDbConnected()) {
+      let product = await Product.findOne({ _id: id, userId });
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      const oldQty = product.quantity;
+      if (name) product.name = name.toLowerCase().trim();
+      if (quantity !== undefined && quantity !== null) product.quantity = Number(quantity);
+      if (unit) product.unit = unit;
+      product.price = price !== undefined && price !== null && price !== "" ? Number(price) : null;
+      product.updatedAt = new Date();
+      await product.save();
+      
+      const quantityChanged = product.quantity - oldQty;
+      
+      const auditLog = new AuditLog({
+        originalTranscript: `Manually updated product "${product.name}"`,
+        parsedAction: 'SET_STOCK',
+        calculationDetail: `📝 Manually Edited -> Product: "${product.name}", Qty: ${product.quantity} ${product.unit} (changed by ${quantityChanged}), Price: ₹${product.price || '-'}`,
+        targetProduct: product.name,
+        quantityChanged,
+        finalQuantity: product.quantity,
+        userId
+      });
+      await auditLog.save();
+      savedLog = auditLog;
+    } else {
+      let product = mockProducts.find(p => p._id === id);
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      const oldQty = product.quantity;
+      if (name) product.name = name.toLowerCase().trim();
+      if (quantity !== undefined && quantity !== null) product.quantity = Number(quantity);
+      if (unit) product.unit = unit;
+      product.price = price !== undefined && price !== null && price !== "" ? Number(price) : null;
+      product.updatedAt = new Date().toISOString();
+      
+      const quantityChanged = product.quantity - oldQty;
+      
+      const auditLog = {
+        _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
+        timestamp: new Date().toISOString(),
+        originalTranscript: `Manually updated product "${product.name}"`,
+        parsedAction: 'SET_STOCK',
+        calculationDetail: `📝 Manually Edited -> Product: "${product.name}", Qty: ${product.quantity} ${product.unit} (changed by ${quantityChanged}), Price: ₹${product.price || '-'}`,
+        targetProduct: product.name,
+        quantityChanged,
+        finalQuantity: product.quantity
+      };
+      mockLogs.unshift(auditLog);
+      savedLog = auditLog;
+    }
+    
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    res.json({ success: true, products, summaries, log: savedLog });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    res.status(500).json({ error: 'Server error updating product' });
+  }
+});
+
+// Manually delete a product from the inventory completely
+router.delete('/products/:id', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { id } = req.params;
+    let savedLog = null;
+    
+    if (isDbConnected()) {
+      const product = await Product.findOne({ _id: id, userId });
+      if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      const productName = product.name;
+      const finalQty = product.quantity;
+      
+      await Product.deleteOne({ _id: id, userId });
+      
+      const auditLog = new AuditLog({
+        originalTranscript: `Manually deleted product "${productName}"`,
+        parsedAction: 'REMOVE_STOCK',
+        calculationDetail: `🗑️ Manually Deleted -> Product "${productName}" removed from system`,
+        targetProduct: productName,
+        quantityChanged: -finalQty,
+        finalQuantity: 0,
+        userId
+      });
+      await auditLog.save();
+      savedLog = auditLog;
+    } else {
+      const productIndex = mockProducts.findIndex(p => p._id === id);
+      if (productIndex === -1) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      
+      const productName = mockProducts[productIndex].name;
+      const finalQty = mockProducts[productIndex].quantity;
+      
+      mockProducts.splice(productIndex, 1);
+      
+      const auditLog = {
+        _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
+        timestamp: new Date().toISOString(),
+        originalTranscript: `Manually deleted product "${productName}"`,
+        parsedAction: 'REMOVE_STOCK',
+        calculationDetail: `🗑️ Manually Deleted -> Product "${productName}" removed from system`,
+        targetProduct: productName,
+        quantityChanged: -finalQty,
+        finalQuantity: 0
+      };
+      mockLogs.unshift(auditLog);
+      savedLog = auditLog;
+    }
+    
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    res.json({ success: true, products, summaries, log: savedLog });
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({ error: 'Server error deleting product' });
   }
 });
 

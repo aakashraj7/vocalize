@@ -121,3 +121,34 @@
   min-height: 100vh;
   display: block;
 }
+
+/* Hide scrollbars but allow scrolling */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Custom horizontal scrollbar/slider for product names */
+.product-name-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+.product-name-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+  border-radius: 2px;
+}
+.product-name-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.45); /* Violet accent color */
+  border-radius: 2px;
+}
+.product-name-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.75);
+}
+.product-name-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.45) rgba(15, 23, 42, 0.4);
+}
+
+
