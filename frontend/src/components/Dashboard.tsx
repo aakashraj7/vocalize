@@ -126,8 +126,10 @@ export default function Dashboard({
   // Custom toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  // Ledger OCR upload states
+  // Ledger OCR modal state
   const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
+
+  // Ledger OCR upload states
   const [isProcessingLedger, setIsProcessingLedger] = useState(false);
   const [extractedItems, setExtractedItems] = useState<{ name: string; quantity: number; unit: string; price?: number }[]>([]);
   const [ledgerError, setLedgerError] = useState<string>('');
@@ -511,7 +513,7 @@ export default function Dashboard({
         showToast(`Successfully imported ${extractedItems.length} items to inventory.`);
         addTerminalLog(`✓ Success: Bulk imported ${extractedItems.length} items into database.`);
         
-        // Reset and close
+        // Close modal
         setIsLedgerModalOpen(false);
         setExtractedItems([]);
       } else {
@@ -809,9 +811,8 @@ export default function Dashboard({
 
       {/* Main Grid Workspace */}
       <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] w-full mx-auto">
-        
-        {/* Left Hand side Panel: Terminal & Mic, and Audit Timeline (4 Columns) */}
-        <div className="lg:col-span-4 flex flex-col gap-6 h-full min-h-0">
+            {/* Left Hand side Panel: Terminal & Mic, and Audit Timeline (4 Columns) */}
+            <div className="lg:col-span-4 flex flex-col gap-6 h-full min-h-0">
           
           {/* Section A: Command Center (Voice Logger Terminal) */}
           <section className="glass-card rounded-3xl p-6 border border-slate-800/60 relative overflow-hidden flex flex-col gap-5">
@@ -1474,180 +1475,219 @@ export default function Dashboard({
           </section>
 
         </div>
-
       </main>
 
       {/* Ledger OCR Upload Modal */}
       {isLedgerModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md transition-opacity duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 overflow-y-auto">
           <div 
-            className="glass-card w-full max-w-2xl p-6 rounded-2xl border border-slate-850 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 text-slate-200"
+            className="glass-card w-full max-w-6xl p-6 rounded-3xl border border-slate-850 shadow-2xl relative flex flex-col gap-6 max-h-[90vh] overflow-hidden text-slate-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Close Button */}
             <button
-              onClick={() => {
-                if (!isProcessingLedger) {
-                  setIsLedgerModalOpen(false);
-                  setExtractedItems([]);
-                  setLedgerError('');
-                }
-              }}
-              disabled={isProcessingLedger}
-              className="absolute top-4 right-4 p-1 rounded-lg hover:bg-slate-800 hover:text-white text-slate-400 transition cursor-pointer disabled:opacity-55"
+              onClick={() => setIsLedgerModalOpen(false)}
+              className="absolute top-4 right-4 p-1 rounded-lg hover:bg-slate-800 hover:text-white text-slate-400 transition cursor-pointer z-10"
             >
-              <X className="w-4 h-4" />
+              <X className="w-4.5 h-4.5" />
             </button>
 
-            <div className="flex items-center gap-2 mb-5">
-              <UploadCloud className="w-4.5 h-4.5 text-violet-400 animate-pulse" />
-              <h3 className="text-sm font-bold text-white tracking-wide uppercase">
-                Import Ledger Sheet (AI Scanner)
-              </h3>
-            </div>
-
-            {ledgerError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 font-medium text-xs">
-                {ledgerError}
-              </div>
-            )}
-
-            {/* Pane 1: File Dropzone (no items extracted yet, not processing) */}
-            {extractedItems.length === 0 && !isProcessingLedger && (
-              <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-850 hover:border-violet-500/50 rounded-2xl p-10 bg-slate-950/40 transition-colors duration-200 relative group">
-                <input
-                  type="file"
-                  onChange={handleLedgerFileUpload}
-                  accept="image/png, image/jpeg, image/jpg, image/webp, application/pdf"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <UploadCloud className="w-12 h-12 text-slate-500 group-hover:text-violet-400 transition-colors duration-200 mb-3" />
-                <p className="text-xs font-semibold text-slate-300 text-center mb-1">
-                  Drag and drop your handwritten or printed ledger sheet here, or click to browse
-                </p>
-                <p className="text-[10px] text-slate-500 text-center">
-                  Supports PNG, JPG, JPEG, WEBP, or PDF up to 20MB
-                </p>
-              </div>
-            )}
-
-            {/* Loading / Processing Indicator */}
-            {isProcessingLedger && (
-              <div className="flex flex-col items-center justify-center p-12 space-y-4">
-                <RefreshCw className="w-10 h-10 text-violet-500 animate-spin" />
-                <div className="text-center">
-                  <p className="text-xs font-semibold text-slate-300">Processing document with Gemini AI...</p>
-                  <p className="text-[10px] text-slate-500 mt-1">Extracting product names, stock quantities, units, and prices...</p>
-                </div>
-              </div>
-            )}
-
-            {/* Pane 2 & 3: Review & Edit Grid */}
-            {extractedItems.length > 0 && !isProcessingLedger && (
-              <div className="space-y-4 text-xs">
-                <p className="text-[11px] text-slate-400">
-                  Verify and edit the items extracted by AI below before importing them into your inventory database.
-                </p>
-
-                <div className="border border-slate-850 rounded-xl overflow-hidden max-h-[320px] overflow-y-auto bg-slate-950/50">
-                  <table className="w-full text-left border-collapse table-auto">
-                    <thead>
-                      <tr className="border-b border-slate-800 bg-slate-950/80 sticky top-0 z-10 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        <th className="px-4 py-3">Product Name</th>
-                        <th className="px-4 py-3 w-20">Quantity</th>
-                        <th className="px-4 py-3 w-24">Unit</th>
-                        <th className="px-4 py-3 w-28">Price ({currencySymbol})</th>
-                        <th className="px-4 py-3 text-right w-16">Remove</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-850">
-                      {extractedItems.map((item, index) => (
-                        <tr key={index} className="hover:bg-slate-900/30">
-                          <td className="px-4 py-2">
-                            <input
-                              type="text"
-                              value={item.name}
-                              onChange={(e) => handleUpdateExtractedItem(index, 'name', e.target.value)}
-                              className="w-full bg-transparent border-none text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-600/30 rounded px-1 capitalize"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              min="0"
-                              value={item.quantity}
-                              onChange={(e) => handleUpdateExtractedItem(index, 'quantity', Number(e.target.value))}
-                              className="w-full bg-transparent border-none text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-600/30 rounded px-1 font-mono"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="text"
-                              value={item.unit}
-                              onChange={(e) => handleUpdateExtractedItem(index, 'unit', e.target.value)}
-                              className="w-full bg-transparent border-none text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-600/30 rounded px-1 lowercase"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={item.price !== undefined ? item.price : ''}
-                              onChange={(e) => handleUpdateExtractedItem(index, 'price', e.target.value === '' ? undefined : Number(e.target.value))}
-                              placeholder="Optional"
-                              className="w-full bg-transparent border-none text-slate-200 focus:outline-none focus:ring-1 focus:ring-violet-600/30 rounded px-1 font-mono placeholder:text-slate-700"
-                            />
-                          </td>
-                          <td className="px-4 py-2 text-right">
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveExtractedItem(index)}
-                              className="p-1 hover:text-rose-500 hover:bg-slate-900 rounded transition duration-150 cursor-pointer text-slate-500"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t border-slate-850">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExtractedItems([]);
-                      setLedgerError('');
-                    }}
-                    className="px-4 py-2 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs"
-                  >
-                    Reset & Upload Again
-                  </button>
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsLedgerModalOpen(false);
-                        setExtractedItems([]);
-                        setLedgerError('');
-                      }}
-                      className="px-4 py-2 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleImportLedgerItems}
-                      className="px-4 py-2 bg-violet-600 hover:bg-violet-750 text-white rounded-xl transition cursor-pointer font-bold text-xs border border-violet-500/30 flex items-center gap-1.5 shadow-lg shadow-violet-900/20"
-                    >
-                      Import {extractedItems.length} Products
-                    </button>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto pr-1">
+              {/* Left Panel: Ledger File Uploader Dropzone (col-span-4) */}
+              <div className="lg:col-span-4 flex flex-col gap-6">
+                <section className="glass-card rounded-3xl p-6 border border-slate-800/60 relative overflow-hidden flex flex-col gap-5 h-full">
+                  <div className="flex items-center gap-2 mb-1">
+                    <UploadCloud className="w-5 h-5 text-cyan-400 animate-pulse" />
+                    <h2 className="text-sm font-black tracking-wider uppercase text-white">
+                      LEDGER <span className="text-cyan-400">SCANNER</span>
+                    </h2>
                   </div>
-                </div>
+
+                  {ledgerError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 font-medium text-xs">
+                      {ledgerError}
+                    </div>
+                  )}
+
+                  {/* Dropzone or File summary */}
+                  {extractedItems.length === 0 && !isProcessingLedger ? (
+                    <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 hover:border-cyan-500/40 rounded-2xl p-6 bg-slate-950/40 transition-colors duration-200 relative group min-h-[300px]">
+                      <input
+                        type="file"
+                        onChange={handleLedgerFileUpload}
+                        accept="image/png, image/jpeg, image/jpg, image/webp, application/pdf"
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <UploadCloud className="w-12 h-12 text-slate-500 group-hover:text-cyan-400 transition-colors duration-200 mb-3" />
+                      <p className="text-xs font-semibold text-slate-350 text-center mb-1 leading-relaxed">
+                        Drag & drop your handwritten or printed ledger sheet here, or click to browse
+                      </p>
+                      <p className="text-[10px] text-slate-500 text-center mt-1">
+                        Supports PNG, JPG, JPEG, WEBP, or PDF up to 20MB
+                      </p>
+                    </div>
+                  ) : isProcessingLedger ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4 min-h-[300px]">
+                      <RefreshCw className="w-10 h-10 text-cyan-400 animate-spin" />
+                      <div className="text-center">
+                        <p className="text-xs font-semibold text-slate-300">Processing document with Gemini AI...</p>
+                        <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                          Extracting product names, stock quantities, units, and prices...
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center border border-slate-800 rounded-2xl p-6 bg-[#060814]/30 min-h-[300px] text-center gap-4">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-200">Ledger Sheet Processed</p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Successfully extracted {extractedItems.length} items. Edit details on the right review panel.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExtractedItems([]);
+                          setLedgerError('');
+                        }}
+                        className="px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:text-white rounded-xl text-slate-300 transition cursor-pointer font-bold text-[10px] uppercase tracking-wider"
+                      >
+                        Scan Another Sheet
+                      </button>
+                    </div>
+                  )}
+                </section>
               </div>
-            )}
+
+              {/* Right Panel: Extracted Items Review Grid (col-span-8) */}
+              <div className="lg:col-span-8 flex flex-col h-full min-h-[500px]">
+                <section className="glass-card rounded-2xl p-5 border border-slate-800/60 flex-1 flex flex-col overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-cyan-400" />
+                      <h2 className="text-sm font-black tracking-wider uppercase text-white">
+                        REVIEW & <span className="text-cyan-400">EDIT GRID</span>
+                      </h2>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest bg-slate-950 px-2.5 py-1 rounded border border-slate-900">
+                      {extractedItems.length} Extracted Items
+                    </span>
+                  </div>
+
+                  {extractedItems.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-center py-20 bg-[#06090f] border border-slate-855 rounded-xl">
+                      <Database className="w-10 h-10 mb-3 opacity-25" />
+                      <p className="text-xs">No items scanned yet.</p>
+                      <p className="text-[10px] opacity-75 mt-1 leading-relaxed">
+                        Upload your stock inventory document on the left panel. <br />
+                        The extracted list will display here for editing.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col justify-between overflow-hidden">
+                      <div className="flex-1 overflow-x-auto border border-slate-850 rounded-xl bg-[#06090f] overflow-y-auto max-h-[480px]">
+                        <table className="w-full text-left border-collapse table-auto text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 bg-slate-950/80 sticky top-0 z-10 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              <th className="px-4 py-3">Product Name</th>
+                              <th className="px-4 py-3 w-24">Quantity</th>
+                              <th className="px-4 py-3 w-28">Unit</th>
+                              <th className="px-4 py-3 w-32">Price ({currencySymbol})</th>
+                              <th className="px-4 py-3 text-right w-20">Remove</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-850 text-slate-300">
+                            {extractedItems.map((item, index) => (
+                              <tr key={index} className="hover:bg-slate-900/30">
+                                <td className="px-4 py-2 font-semibold">
+                                  <input
+                                    type="text"
+                                    value={item.name}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'name', e.target.value)}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 capitalize"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 font-mono">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={item.quantity}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'quantity', Number(e.target.value))}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5"
+                                  />
+                                </td>
+                                <td className="px-4 py-2">
+                                  <input
+                                    type="text"
+                                    value={item.unit}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'unit', e.target.value)}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 lowercase"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 font-mono">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={item.price !== undefined ? item.price : ''}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'price', e.target.value === '' ? undefined : Number(e.target.value))}
+                                    placeholder="Not Set"
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 placeholder:text-slate-700"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveExtractedItem(index)}
+                                    className="p-2 hover:text-rose-500 hover:bg-slate-900 rounded-lg transition duration-150 cursor-pointer text-slate-500"
+                                    title="Remove item"
+                                  >
+                                    <Trash2 className="w-4.5 h-4.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtractedItems([]);
+                            setLedgerError('');
+                          }}
+                          className="px-4 py-2.5 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs uppercase tracking-wider"
+                        >
+                          Reset List
+                        </button>
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExtractedItems([]);
+                              setLedgerError('');
+                              setIsLedgerModalOpen(false);
+                            }}
+                            className="px-4 py-2.5 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs uppercase tracking-wider"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleImportLedgerItems}
+                            className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl transition cursor-pointer font-bold text-xs uppercase tracking-wider border border-violet-500/30 flex items-center gap-1.5 shadow-lg shadow-violet-900/20 active:scale-95"
+                          >
+                            Import {extractedItems.length} Products
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
           </div>
         </div>
       )}

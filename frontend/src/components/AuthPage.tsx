@@ -159,10 +159,14 @@ export default function AuthPage({
       <div className="w-full md:w-1/2 lg:w-[48%] flex items-center justify-center p-4 sm:p-6 md:p-8 lg:p-12 relative z-10 min-h-screen">
         
         {/* Main interactive glassmorphism auth card */}
-        <div className="w-full max-w-md max-h-[90vh] flex flex-col bg-slate-950/40 backdrop-blur-xl border border-violet-500/20 rounded-[32px] shadow-[0_0_50px_rgba(0,0,0,0.5)] p-6 md:p-8 overflow-hidden select-none">
+        <div className={`w-full max-w-md flex flex-col bg-slate-950/40 backdrop-blur-xl border border-violet-500/20 rounded-[32px] shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden select-none ${
+          authMode === 'signup' ? 'max-h-[95vh] p-6 md:p-7' : 'max-h-[90vh] p-6 md:p-8'
+        }`}>
           
           {/* Card Static Header */}
-          <div className="flex items-start justify-between shrink-0 mb-4 pb-2 border-b border-slate-900/60">
+          <div className={`flex items-start justify-between shrink-0 border-b border-slate-900/60 ${
+            authMode === 'signup' ? 'mb-3 pb-2' : 'mb-4 pb-2'
+          }`}>
             <div>
               <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">
                 {authMode === 'signin' ? 'Welcome back' : 'Create sandbox profile'}
@@ -182,7 +186,7 @@ export default function AuthPage({
           </div>
 
           {/* Scrollable Container for form fields, tabs, etc. */}
-          <div className="flex-1 overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent flex flex-col gap-4">
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent flex flex-col gap-3">
             
             {/* Google Sign In (if configured) */}
             {isConfigured && (
@@ -237,7 +241,7 @@ export default function AuthPage({
             )}
 
             {/* Actual Auth Form */}
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <form id="auth-form" onSubmit={handleSubmit} className="flex flex-col gap-3">
               
               {authMode === 'signin' ? (
                 // Sign In Fields
@@ -288,7 +292,7 @@ export default function AuthPage({
               ) : (
                 // Sign Up Fields
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div className="flex flex-col gap-1.5 text-left">
                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
                         <User className="w-3 h-3 text-slate-500" />
@@ -326,53 +330,55 @@ export default function AuthPage({
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 text-left">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
-                      <Lock className="w-3 h-3 text-slate-500" />
-                      Password
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full pl-10 pr-10 py-2.5 text-sm rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 transition cursor-pointer"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <div className="flex flex-col gap-1.5 text-left">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                        <Lock className="w-3 h-3 text-slate-500" />
+                        Password
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-10 pr-10 py-2.5 text-sm rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 transition cursor-pointer"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex flex-col gap-1.5 text-left">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
-                      <Lock className="w-3 h-3 text-slate-500" />
-                      Confirm Password
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showConfirmPassword ? "text" : "password"}
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full pl-10 pr-10 py-2.5 text-sm rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 transition cursor-pointer"
-                      >
-                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
+                    <div className="flex flex-col gap-1.5 text-left">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
+                        <Lock className="w-3 h-3 text-slate-500" />
+                        Confirm Password
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showConfirmPassword ? "text" : "password"}
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-10 pr-10 py-2.5 text-sm rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-350 transition cursor-pointer"
+                        >
+                          {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -394,7 +400,7 @@ export default function AuthPage({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div className="flex flex-col gap-1.5 text-left">
                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">
                         Category
@@ -431,7 +437,7 @@ export default function AuthPage({
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 text-left">
+                  <div className="flex flex-col gap-1.5 text-left shrink-0">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1 flex items-center gap-1.5">
                       <Globe className="w-3 h-3 text-slate-500" />
                       Voice Language Dialect
@@ -454,36 +460,19 @@ export default function AuthPage({
                   </div>
                 </>
               )}
-
-              <button
-                type="submit"
-                className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/15 hover:shadow-violet-500/25 transition duration-150 cursor-pointer"
-              >
-                {authMode === 'signin' ? (
-                  <>
-                    <LogIn className="w-4 h-4" />
-                    Access Account
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    Register Account
-                  </>
-                )}
-              </button>
             </form>
 
-            {/* Sandbox Status Banner */}
-            <div className="relative my-2 text-center shrink-0">
+            {/* Sandbox Status Banner — sign-in only to keep signup form compact */}
+            {authMode === 'signin' && <div className="relative my-2 text-center shrink-0">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-slate-900" />
               </div>
               <span className="relative px-3 bg-[#080c14] text-[10px] font-bold uppercase tracking-widest text-slate-500">
                 System Status
               </span>
-            </div>
+            </div>}
 
-            <div className={`p-3 rounded-xl border flex items-center gap-3 text-left text-[11px] shrink-0 ${
+            {authMode === 'signin' && <div className={`p-3 rounded-xl border flex items-center gap-3 text-left text-[11px] shrink-0 ${
               isConfigured 
                 ? 'bg-emerald-500/5 border-emerald-500/10 text-emerald-400' 
                 : 'bg-amber-500/5 border-amber-500/10 text-amber-400'
@@ -509,10 +498,10 @@ export default function AuthPage({
                 )}
               </div>
               <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isConfigured ? 'bg-emerald-400 shadow-[0_0_8px_#10b981] animate-pulse' : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'}`} />
-            </div>
+            </div>}
 
-            {/* Quick Demo Bypass */}
-            <div className="mt-3 pt-3 border-t border-slate-900/60 text-center flex flex-col gap-2">
+            {/* Quick Demo Bypass — sign-in only */}
+            {authMode === 'signin' && <div className="mt-3 pt-3 border-t border-slate-900/60 text-center flex flex-col gap-2">
               <button
                 onClick={onLaunchDemo}
                 className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition cursor-pointer"
@@ -523,15 +512,38 @@ export default function AuthPage({
               <span className="text-[10px] text-slate-500 font-medium">
                 (Pre-seeded with mock items for quick preview)
               </span>
+            </div>}
+
+          </div>
+
+          {/* Pinned submit — always visible above footer */}
+          <button
+            type="submit"
+            form="auth-form"
+            className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/15 hover:shadow-violet-500/25 transition duration-150 cursor-pointer shrink-0 ${
+              authMode === 'signup' ? 'mt-4' : 'mt-3'
+            }`}
+          >
+            {authMode === 'signin' ? (
+              <>
+                <LogIn className="w-4 h-4" />
+                Access Account
+              </>
+            ) : (
+              <>
+                <UserPlus className="w-4 h-4" />
+                Register Account
+              </>
+            )}
+          </button>
+
+          {/* Card Static Footer — sign-in only */}
+          {authMode === 'signin' && (
+            <div className="pt-4 mt-2 border-t border-slate-900/60 flex items-center justify-center gap-2 text-[10px] text-slate-500 font-semibold tracking-wider uppercase text-center select-none shrink-0">
+              <Lock className="w-3 h-3 text-violet-500" />
+              Vocalize AI Security Verified
             </div>
-
-          </div>
-
-          {/* Card Static Footer */}
-          <div className="pt-4 mt-2 border-t border-slate-900/60 flex items-center justify-center gap-2 text-[10px] text-slate-500 font-semibold tracking-wider uppercase text-center select-none shrink-0">
-            <Lock className="w-3 h-3 text-violet-500" />
-            Vocalize AI Security Verified
-          </div>
+          )}
 
         </div>
       </div>
