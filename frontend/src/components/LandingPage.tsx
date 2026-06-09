@@ -408,28 +408,46 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
             </div>
 
             {/* Interactive Input Form */}
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-5">
+              
+              {/* Large Microphone speak trigger */}
+              <div className="flex flex-col items-center gap-2 select-none py-1">
+                <div className="relative flex items-center justify-center">
+                  {/* Concentric rings */}
+                  <div className={`absolute rounded-full border border-violet-500/5 transition-all duration-300 w-20 h-20 ${
+                    isListening ? 'shadow-[0_0_20px_rgba(239,68,68,0.2)] border-rose-500/15 animate-ping' : ''
+                  }`} />
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    disabled={voiceSimStep !== 'idle'}
+                    className={`relative z-10 w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 shadow-md cursor-pointer hover:scale-105 active:scale-95 border ${
+                      isListening 
+                        ? 'bg-rose-600 border-rose-500 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]' 
+                        : 'bg-slate-900/80 border-slate-800 text-violet-400 hover:border-violet-500/50 hover:bg-slate-900'
+                    }`}
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                </div>
+                <span className="text-[10px] font-bold tracking-wider uppercase text-slate-500 mt-1">
+                  {isListening ? (
+                    <span className="text-rose-400 animate-pulse">Listening... Speak now</span>
+                  ) : (
+                    <span>Click to start listening</span>
+                  )}
+                </span>
+              </div>
+
+              {/* Text Input Row */}
               <div className="relative">
-                <button
-                  type="button"
-                  onClick={toggleListening}
-                  disabled={voiceSimStep !== 'idle'}
-                  className={`absolute left-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition duration-200 cursor-pointer ${
-                    isListening 
-                      ? 'bg-rose-600 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)] hover:bg-rose-500' 
-                      : 'text-violet-400 hover:bg-slate-900 hover:text-violet-350'
-                  }`}
-                  title={isListening ? 'Listening... click to cancel' : 'Click to speak command'}
-                >
-                  <Mic className="w-4 h-4" />
-                </button>
                 <input 
                   type="text"
                   value={voiceSimText}
                   onChange={(e) => setVoiceSimText(e.target.value)}
-                  placeholder="Enter speech transcript (e.g. add 10 bags of sugar)..."
+                  placeholder="Or edit speech transcript manually..."
                   disabled={voiceSimStep !== 'idle'}
-                  className="w-full pl-12 pr-24 py-2.5 text-xs rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
+                  className="w-full pl-4.5 pr-24 py-2.5 text-xs rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1.5">
                   {voiceSimStep !== 'idle' ? (
