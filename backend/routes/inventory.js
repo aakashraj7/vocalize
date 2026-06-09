@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const AuditLog = require('../models/AuditLog');
-const { parseVoiceTranscript, classifyIntent, generateDynamicReply, isPronounOrFiller, cleanProductName } = require('../services/geminiService');
+const { parseVoiceTranscript, classifyIntent, generateDynamicReply, isPronounOrFiller, cleanProductName, analyzeLedgerSheet } = require('../services/geminiService');
 const authMiddleware = require('../middleware/auth');
 
 // In-memory fallback databases when MongoDB is not connected
@@ -710,6 +710,180 @@ router.put('/products/:id', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error updating product:', error);
     res.status(500).json({ error: 'Server error updating product' });
+  }
+});
+
+// Clear all inventory products and audit logs for the authenticated merchant
+router.delete('/clear-all', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    console.log(`Wiping all inventory and logs for user: ${userId}`);
+
+    if (mongoose.connection.readyState === 1) {
+      await Product.deleteMany({ userId });
+      await AuditLog.deleteMany({ userId });
+    } else {
+      mockProducts = mockProducts.filter(p => p.userId !== userId);
+      mockLogs = mockLogs.filter(l => l.userId !== userId);
+    }
+
+    res.json({ success: true, message: 'All merchant inventory data wiped out successfully.' });
+  } catch (error) {
+    console.error('Error clearing merchant data:', error);
+    res.status(500).json({ error: 'Server error wiping merchant inventory data' });
+  }
+});
+
+// Parse uploaded handwritten ledger page via Base64 payload
+router.post('/products/upload-ledger', authMiddleware, async (req, res) => {
+  try {
+    const { fileData, mimeType } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ error: 'fileData (Base64 string) is required' });
+    }
+
+    // Strip header prefix if present (e.g. data:image/png;base64,)
+    let base64Data = fileData;
+    let actualMimeType = mimeType || 'image/jpeg';
+    
+    if (fileData.startsWith('data:')) {
+      const match = fileData.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        actualMimeType = match[1];
+        base64Data = match[2];
+      }
+    }
+
+    const items = await analyzeLedgerSheet(base64Data, actualMimeType);
+    res.json({ success: true, items });
+  } catch (error) {
+    console.error('Error in upload-ledger route:', error);
+    res.status(500).json({ error: 'Server error processing ledger upload' });
+  }
+});
+
+// Public demo endpoint for unauthenticated landing page experience
+router.post('/public/upload-ledger', async (req, res) => {
+  try {
+    const { fileData, mimeType } = req.body;
+    if (!fileData) {
+      return res.status(400).json({ error: 'fileData (Base64 string) is required' });
+    }
+
+    let base64Data = fileData;
+    let actualMimeType = mimeType || 'image/jpeg';
+    
+    if (fileData.startsWith('data:')) {
+      const match = fileData.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        actualMimeType = match[1];
+        base64Data = match[2];
+      }
+    }
+
+    const items = await analyzeLedgerSheet(base64Data, actualMimeType);
+    res.json({ success: true, items });
+  } catch (error) {
+    console.error('Error in public upload-ledger route:', error);
+    res.status(500).json({ error: error.message || 'Server error processing public ledger upload' });
+  }
+});
+
+// Bulk import/initialize products catalog
+router.post('/products/bulk', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { items } = req.body;
+    
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const insertedProducts = [];
+    let savedLog = null;
+
+    if (mongoose.connection.readyState === 1) {
+      for (const item of items) {
+        const cleanName = item.name.toLowerCase().trim();
+        let product = await Product.findOne({ name: cleanName, userId });
+        if (product) {
+          product.quantity += Number(item.quantity) || 0;
+          if (item.price !== undefined && item.price !== null) {
+            product.price = Number(item.price);
+          }
+          product.updatedAt = new Date();
+          await product.save();
+        } else {
+          product = new Product({
+            name: cleanName,
+            quantity: Number(item.quantity) || 0,
+            unit: item.unit || 'pcs',
+            price: item.price !== undefined && item.price !== null ? Number(item.price) : null,
+            userId,
+            updatedAt: new Date()
+          });
+          await product.save();
+        }
+        insertedProducts.push(product);
+      }
+
+      const auditLog = new AuditLog({
+        originalTranscript: `Bulk imported ${items.length} items from scanned ledger sheet`,
+        parsedAction: 'ADD_STOCK',
+        calculationDetail: `📝 Bulk Initialized -> Imported ${items.length} items from handwritten ledger sheet`,
+        targetProduct: 'multiple-items',
+        quantityChanged: items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+        finalQuantity: items.length,
+        userId
+      });
+      await auditLog.save();
+      savedLog = auditLog;
+    } else {
+      ensureMockProductsSeeded(userId);
+      for (const item of items) {
+        const cleanName = item.name.toLowerCase().trim();
+        let product = mockProducts.find(p => p.name === cleanName && p.userId === userId);
+        if (product) {
+          product.quantity += Number(item.quantity) || 0;
+          if (item.price !== undefined && item.price !== null) {
+            product.price = Number(item.price);
+          }
+          product.updatedAt = new Date().toISOString();
+        } else {
+          product = {
+            _id: 'mock_p_' + Math.random().toString(36).substr(2, 9),
+            name: cleanName,
+            quantity: Number(item.quantity) || 0,
+            unit: item.unit || 'pcs',
+            price: item.price !== undefined && item.price !== null ? Number(item.price) : null,
+            userId,
+            updatedAt: new Date().toISOString()
+          };
+          mockProducts.push(product);
+        }
+        insertedProducts.push(product);
+      }
+
+      const auditLog = {
+        _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
+        timestamp: new Date().toISOString(),
+        originalTranscript: `Bulk imported ${items.length} items from scanned ledger sheet`,
+        parsedAction: 'ADD_STOCK',
+        calculationDetail: `📝 Bulk Initialized -> Imported ${items.length} items from handwritten ledger sheet`,
+        targetProduct: 'multiple-items',
+        quantityChanged: items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+        finalQuantity: items.length,
+        userId
+      };
+      mockLogs.unshift(auditLog);
+      savedLog = auditLog;
+    }
+
+    const { products, summaries } = await getFreshProductsAndSummaries(userId);
+    res.json({ success: true, products, summaries, log: savedLog });
+  } catch (error) {
+    console.error('Error in bulk import route:', error);
+    res.status(500).json({ error: 'Server error processing bulk import' });
   }
 });
 
