@@ -219,5 +219,24 @@
   animation: soundwave-mini 1.2s ease-in-out infinite;
 }
 
+/* Minimal book transforming into sheet (3D Y-axis flip transition) */
+@keyframes minimal-flip {
+  0%, 35% {
+    transform: rotateY(0deg);
+  }
+  50%, 85% {
+    transform: rotateY(180deg);
+  }
+  100% {
+    transform: rotateY(360deg);
+  }
+}
+
+.animate-minimal-flip {
+  animation: minimal-flip 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+
+
 
 
