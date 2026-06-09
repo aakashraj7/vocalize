@@ -14,52 +14,59 @@ interface LandingPageProps {
 export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
   const navigate = useNavigate();
 
-  // Landing Page Interactive Simulator States
-  const [simText, setSimText] = useState('add 12 bags of rice and sold 3 now');
-  const [simStep, setSimStep] = useState<'idle' | 'analyzing' | 'applying' | 'done' | 'ledgerError'>('idle');
-  const [simProducts, setSimProducts] = useState([
+  // Landing Page Voice Simulator States
+  const [voiceSimText, setVoiceSimText] = useState('add 12 bags of rice and sold 3 now');
+  const [voiceSimStep, setVoiceSimStep] = useState<'idle' | 'analyzing' | 'applying' | 'done'>('idle');
+  const [voiceSimProducts, setVoiceSimProducts] = useState([
     { name: 'rice', quantity: 4, unit: 'bags', price: 80, updated: 'Updated 2 hours ago' },
     { name: 'sugar', quantity: 45, unit: 'kg', price: 15, updated: 'Updated yesterday' }
   ]);
-  const [simLogs, setSimLogs] = useState<string[]>([
+  const [voiceSimLogs, setVoiceSimLogs] = useState<string[]>([
     '📝 Initialized inventory grid'
   ]);
-  const [ledgerError, setLedgerError] = useState('');
 
-  // Run Mock Interactive Simulator
-  const handleSimulate = () => {
-    if (simStep !== 'idle') return;
+  // Landing Page Ledger OCR Simulator States
+  const [ocrSimStep, setOcrSimStep] = useState<'idle' | 'analyzing' | 'done' | 'error'>('idle');
+  const [ocrSimProducts, setOcrSimProducts] = useState<any[]>([]);
+  const [ocrSimLogs, setOcrSimLogs] = useState<string[]>([
+    '📝 System ready. Upload a document to start.'
+  ]);
+  const [ocrError, setOcrError] = useState('');
+
+  // Run Voice Simulator
+  const handleSimulateVoice = () => {
+    if (voiceSimStep !== 'idle') return;
     
-    setSimStep('analyzing');
-    setSimLogs(prev => [...prev, `🎙️ Spoke: "${simText}"`, '🔍 Intent: Command (Transaction)', '🤖 Classifying & splitting compound clauses...']);
+    setVoiceSimStep('analyzing');
+    setVoiceSimLogs(prev => [...prev, `🎙️ Spoke: "${voiceSimText}"`, '🔍 Intent: Command (Transaction)', '🤖 Classifying & splitting compound clauses...']);
     
     setTimeout(() => {
-      setSimStep('applying');
-      setSimLogs(prev => [...prev, '⚡ Parsed Actions: [ADD_STOCK: rice 12 bags, REMOVE_STOCK: rice 3 bags]', '💾 Applying calculations: 4 + 12 - 3 = 13 bags...']);
+      setVoiceSimStep('applying');
+      setVoiceSimLogs(prev => [...prev, '⚡ Parsed Actions: [ADD_STOCK: rice 12 bags, REMOVE_STOCK: rice 3 bags]', '💾 Applying calculations: 4 + 12 - 3 = 13 bags...']);
     }, 1500);
 
     setTimeout(() => {
-      setSimStep('done');
-      setSimProducts(prev => {
+      setVoiceSimStep('done');
+      setVoiceSimProducts(prev => {
         const copy = [...prev];
         copy[0] = { ...copy[0], quantity: 13, updated: 'Updated Just Now!' };
         return copy;
       });
-      setSimLogs(prev => [...prev, '🟢 Success: Stock updated successfully. Grid refreshed!']);
+      setVoiceSimLogs(prev => [...prev, '🟢 Success: Stock updated successfully. Grid refreshed!']);
     }, 3000);
   };
 
-  // Reset Mock Simulator
-  const handleResetSimulator = () => {
-    setSimStep('idle');
-    setLedgerError('');
-    setSimProducts([
+  // Reset Voice Simulator
+  const handleResetVoiceSim = () => {
+    setVoiceSimStep('idle');
+    setVoiceSimProducts([
       { name: 'rice', quantity: 4, unit: 'bags', price: 80, updated: 'Updated 2 hours ago' },
       { name: 'sugar', quantity: 45, unit: 'kg', price: 15, updated: 'Updated yesterday' }
     ]);
-    setSimLogs(['📝 Initialized inventory grid']);
+    setVoiceSimLogs(['📝 Initialized inventory grid']);
   };
 
+  // Run Ledger OCR Simulator
   const handleSimulateLedgerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -67,13 +74,13 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
 
     // Validate size (20MB)
     if (file.size > 20 * 1024 * 1024) {
-      setLedgerError('File exceeds 20MB limit.');
-      setSimStep('ledgerError');
+      setOcrError('File exceeds 20MB limit.');
+      setOcrSimStep('error');
       return;
     }
 
-    setSimStep('analyzing');
-    setSimLogs([
+    setOcrSimStep('analyzing');
+    setOcrSimLogs([
       `📄 Uploaded inventory sheet: "${file.name}"`,
       `🔍 File type: ${file.type} | Size: ${(file.size / 1024 / 1024).toFixed(2)}MB`,
       `🤖 Calling Gemini AI Scanner (gemini-2.5-flash-lite)...`,
@@ -93,7 +100,7 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
         const data = await response.json();
         if (response.ok && data.success) {
           const items = data.items || [];
-          setSimProducts(items.map((it: any) => ({
+          setOcrSimProducts(items.map((it: any) => ({
             name: it.name,
             quantity: it.quantity,
             unit: it.unit || 'pcs',
@@ -101,22 +108,30 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
             updated: 'Extracted Just Now!'
           })));
 
-          setSimLogs(prev => [
+          setOcrSimLogs(prev => [
             ...prev,
             `✓ Success: Extracted ${items.length} items.`,
             `🟢 Grid initialized with scanned products catalog!`
           ]);
-          setSimStep('done');
+          setOcrSimStep('done');
         } else {
-          setLedgerError(data.error || 'Failed to analyze the document.');
-          setSimStep('ledgerError');
+          setOcrError(data.error || 'Failed to analyze the document.');
+          setOcrSimStep('error');
         }
       } catch (err: any) {
-        setLedgerError(err.message || 'Error uploading file.');
-        setSimStep('ledgerError');
+        setOcrError(err.message || 'Error uploading file.');
+        setOcrSimStep('error');
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  // Reset Ledger OCR Simulator
+  const handleResetOcrSim = () => {
+    setOcrSimStep('idle');
+    setOcrError('');
+    setOcrSimProducts([]);
+    setOcrSimLogs(['📝 System ready. Upload a document to start.']);
   };
 
   return (
@@ -138,8 +153,9 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
             {/* Nav Links */}
             <nav className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-400">
               <a href="#features" className="hover:text-white transition">Features</a>
-              <a href="#simulator" className="hover:text-white transition">Live Simulator</a>
-              <a href="#testimonials" className="hover:text-white transition">Merchant Reviews</a>
+              <a href="#voice-simulator" className="hover:text-white transition">Voice Simulator</a>
+              <a href="#ledger-simulator" className="hover:text-white transition">Ledger Scanner</a>
+              <a href="#testimonials" className="hover:text-white transition">Reviews</a>
               <button 
                 onClick={onLaunchDemo}
                 className="hover:text-violet-400 transition text-left cursor-pointer font-semibold"
@@ -293,38 +309,37 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
                 </p>
               </div>
             </div>
-
           </div>
         </div>
       </section>
 
-      {/* 4. Interactive Simulator Section */}
-      <section id="simulator" className="border-t border-slate-900/60 py-20 relative z-10">
+      {/* 4a. Interactive Voice Simulator Section */}
+      <section id="voice-simulator" className="border-t border-slate-900/60 py-20 relative z-10">
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-12">
           
           {/* Left Description Column */}
           <div className="w-full md:w-[45%] flex flex-col items-center md:items-start text-center md:text-left gap-5 select-none">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-violet-400">Sandbox Preview</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-violet-400">Sandbox Preview A</span>
             <h2 className="text-2xl lg:text-3.5xl font-black text-white tracking-tight leading-tight">
-              Try it yourself. <br />
+              Mic & Voice Command <br />
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-violet-400 to-fuchsia-400">
-                Audit live in sandbox.
+                Quality Testing.
               </span>
             </h2>
             <p className="text-sm text-slate-400 leading-relaxed font-medium">
-              Enter any compound stocking instruction below to test how our AI backend resolves voice transcripts, performs calculations, and renders instant logs.
+              Experience the natural speech parsing engine. Enter compound statements (such as adding stock to one item and selling another in a single breath) to test arithmetic logs and grid updates in real time.
             </p>
 
             {/* Quick Template Tag suggestions */}
             <div className="flex flex-wrap gap-2 justify-center md:justify-start mt-1">
               <button 
-                onClick={() => setSimText('add 12 bags of rice and sold 3 now')}
+                onClick={() => setVoiceSimText('add 12 bags of rice and sold 3 now')}
                 className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] font-semibold text-slate-300 transition cursor-pointer"
               >
                 "add 12 bags of rice and sold 3"
               </button>
               <button 
-                onClick={() => setSimText('sold 15 kg of sugar but set rice price to 90')}
+                onClick={() => setVoiceSimText('sold 15 kg of sugar but set rice price to 90')}
                 className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] font-semibold text-slate-300 transition cursor-pointer"
               >
                 "sold 15 kg of sugar..."
@@ -341,11 +356,11 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
                 <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
                 <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-[10px] font-bold text-slate-500 font-mono ml-2 uppercase">vocalize-sandbox-terminal.sh</span>
+                <span className="text-[10px] font-bold text-slate-500 font-mono ml-2 uppercase">voice-sandbox-terminal.sh</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[9px] font-bold text-emerald-400 font-mono uppercase tracking-wider">Live Simulator</span>
+                <span className="text-[9px] font-bold text-emerald-400 font-mono uppercase tracking-wider">Voice Sim</span>
               </div>
             </div>
 
@@ -355,60 +370,34 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
                 <Mic className="w-4 h-4 text-violet-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input 
                   type="text"
-                  value={simText}
-                  onChange={(e) => setSimText(e.target.value)}
+                  value={voiceSimText}
+                  onChange={(e) => setVoiceSimText(e.target.value)}
                   placeholder="Enter speech transcript (e.g. add 10 bags of sugar)..."
-                  disabled={simStep !== 'idle'}
+                  disabled={voiceSimStep !== 'idle'}
                   className="w-full pl-10 pr-24 py-2.5 text-xs rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1.5">
-                  {simStep !== 'idle' && simStep !== 'ledgerError' ? (
+                  {voiceSimStep !== 'idle' ? (
                     <button 
-                      onClick={handleResetSimulator}
+                      onClick={handleResetVoiceSim}
                       className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-300 cursor-pointer"
                     >
                       Reset
                     </button>
-                  ) : simStep === 'idle' ? (
+                  ) : (
                     <button 
-                      onClick={handleSimulate}
+                      onClick={handleSimulateVoice}
                       className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-[10px] font-bold text-white shadow shadow-violet-500/10 cursor-pointer"
                     >
                       Simulate
                     </button>
-                  ) : null}
+                  )}
                 </div>
               </div>
-
-              {/* public ledger scanner upload option on landing page */}
-              {simStep === 'idle' && (
-                <div className="flex items-center justify-between border border-dashed border-slate-800/60 rounded-xl px-4 py-2.5 bg-slate-950/20 text-[10px]">
-                  <div className="flex items-center gap-2 text-slate-450">
-                    <UploadCloud className="w-4 h-4 text-violet-400 animate-pulse" />
-                    <span>Or experience the AI Ledger Scanner by uploading an image of your inventory:</span>
-                  </div>
-                  <label className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:text-white font-bold text-slate-300 transition duration-150 cursor-pointer flex items-center gap-1 select-none whitespace-nowrap">
-                    <input
-                      type="file"
-                      accept="image/*,application/pdf"
-                      onChange={handleSimulateLedgerUpload}
-                      className="hidden"
-                    />
-                    Upload File
-                  </label>
-                </div>
-              )}
-
-              {simStep === 'ledgerError' && (
-                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-medium flex items-center justify-between">
-                  <span>Failed to parse document: {ledgerError}</span>
-                  <button onClick={handleResetSimulator} className="px-2 py-1 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-lg text-slate-300 cursor-pointer font-bold">Reset</button>
-                </div>
-              )}
             </div>
 
             {/* Simulated Wave/Ripples when processing */}
-            {simStep === 'analyzing' && (
+            {voiceSimStep === 'analyzing' && (
               <div className="flex items-center justify-center gap-1.5 py-4 border-t border-slate-900 mt-4 select-none">
                 <div className="w-1.5 bg-violet-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.1s' }} />
                 <div className="w-1.5 bg-fuchsia-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.3s' }} />
@@ -420,7 +409,7 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
               </div>
             )}
 
-            {simStep === 'applying' && (
+            {voiceSimStep === 'applying' && (
               <div className="flex items-center justify-center gap-1.5 py-4 border-t border-slate-900 mt-4 select-none">
                 <div className="w-1.5 bg-fuchsia-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.1s' }} />
                 <div className="w-1.5 bg-indigo-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.3s' }} />
@@ -442,12 +431,12 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
                   </tr>
                 </thead>
                 <tbody className="text-[11px] font-medium text-slate-300">
-                  {simProducts.map((p, idx) => (
+                  {voiceSimProducts.map((p, idx) => (
                     <tr key={idx} className="border-b border-slate-900/40 hover:bg-slate-900/10 transition">
                       <td className="py-2.5 px-4 font-bold text-slate-200 capitalize">{p.name}</td>
                       <td className="py-2.5 px-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                          p.name === 'rice' && simStep === 'done'
+                          p.name === 'rice' && voiceSimStep === 'done'
                             ? 'bg-emerald-500/10 text-emerald-400 animate-pulse'
                             : 'bg-slate-900 text-slate-400'
                         }`}>
@@ -477,11 +466,164 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-terminal">Audit Execution Log</span>
               </div>
               <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-slate-950/60 border border-slate-900 font-terminal text-[10px] text-slate-400 min-h-[70px]">
-                {simLogs.map((log, idx) => (
+                {voiceSimLogs.map((log, idx) => (
                   <div key={idx} className={`${
                     log.startsWith('🟢') ? 'text-emerald-400 font-bold' : 
                     log.startsWith('⚡') ? 'text-violet-400' :
                     log.startsWith('🎙️') ? 'text-slate-200' : 'text-slate-400'
+                  }`}>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      {/* 4b. Interactive Ledger Scanner Simulator Section */}
+      <section id="ledger-simulator" className="border-t border-slate-900/60 py-20 relative z-10 bg-slate-950/10">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-12">
+          
+          {/* Left Description Column */}
+          <div className="w-full md:w-[45%] flex flex-col items-center md:items-start text-center md:text-left gap-5 select-none">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Sandbox Preview B</span>
+            <h2 className="text-2xl lg:text-3.5xl font-black text-white tracking-tight leading-tight">
+              AI Ledger Document <br />
+              <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-indigo-300">
+                Importing & OCR.
+              </span>
+            </h2>
+            <p className="text-sm text-slate-400 leading-relaxed font-medium">
+              Experience Gemini document intelligence. Upload any handwritten stock note, invoice image, or inventory PDF catalog to parse lists, extract tabular attributes, and initialize your stock grid automatically.
+            </p>
+            <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 text-[11px] text-slate-400 leading-relaxed flex items-start gap-3 mt-2">
+              <UploadCloud className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
+              <span>
+                <strong>Gemini Multimodal Parser</strong> resolves handwritten rows, unstructured lists, unit types (pieces, kg, bags), and custom product prices natively.
+              </span>
+            </div>
+          </div>
+
+          {/* Right Interactive Simulator Widget */}
+          <div className="w-full md:w-[55%] glass-card rounded-2xl border border-slate-800/80 shadow-2xl relative overflow-hidden flex flex-col p-6">
+            
+            {/* Simulated Window Controls */}
+            <div className="flex items-center justify-between border-b border-slate-900 pb-3 mb-4 select-none">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-[10px] font-bold text-slate-500 font-mono ml-2 uppercase">ledger-scanner-terminal.sh</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                <span className="text-[9px] font-bold text-cyan-400 font-mono uppercase tracking-wider">OCR Scanner</span>
+              </div>
+            </div>
+
+            {/* Interactive Input Form */}
+            <div className="flex flex-col gap-3">
+              {ocrSimStep === 'idle' && (
+                <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-800 hover:border-cyan-500/40 rounded-xl p-8 bg-slate-950/20 transition duration-150 relative group">
+                  <UploadCloud className="w-10 h-10 text-slate-500 group-hover:text-cyan-400 transition-colors duration-150 mb-2" />
+                  <p className="text-xs font-semibold text-slate-300 text-center mb-1 select-none">
+                    Select a handwritten ledger sheet or invoice PDF
+                  </p>
+                  <p className="text-[10px] text-slate-500 text-center mb-4 select-none">
+                    PNG, JPG, JPEG, WEBP, or PDF up to 20MB
+                  </p>
+                  <label className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-850 hover:text-white font-bold text-xs text-slate-200 transition duration-150 cursor-pointer flex items-center gap-1.5 select-none">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={handleSimulateLedgerUpload}
+                      className="hidden"
+                    />
+                    Upload File
+                  </label>
+                </div>
+              )}
+
+              {ocrSimStep === 'error' && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium flex items-center justify-between">
+                  <span>Failed to parse document: {ocrError}</span>
+                  <button onClick={handleResetOcrSim} className="px-3 py-1.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl text-slate-350 cursor-pointer font-bold transition">Try Again</button>
+                </div>
+              )}
+
+              {ocrSimStep !== 'idle' && ocrSimStep !== 'error' && (
+                <div className="flex justify-end select-none">
+                  <button 
+                    onClick={handleResetOcrSim}
+                    className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 cursor-pointer transition"
+                  >
+                    Scan Another
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Simulated Wave/Ripples when processing */}
+            {ocrSimStep === 'analyzing' && (
+              <div className="flex items-center justify-center gap-1.5 py-4 border-t border-slate-900 mt-4 select-none">
+                <div className="w-1.5 bg-cyan-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.1s' }} />
+                <div className="w-1.5 bg-indigo-500 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.3s' }} />
+                <div className="w-1.5 bg-cyan-400 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.5s' }} />
+                <div className="w-1.5 bg-indigo-400 rounded-full animate-soundwave h-8" style={{ animationDelay: '0.2s' }} />
+                <span className="text-[10px] text-cyan-400 font-bold font-mono pl-3 uppercase tracking-wider animate-pulse">
+                  Gemini AI scanning and parsing ledger document...
+                </span>
+              </div>
+            )}
+
+            {/* Table rendering simulated rows */}
+            {ocrSimProducts.length > 0 && (
+              <div className="border border-slate-900/60 rounded-xl overflow-hidden mt-4 bg-slate-950/30">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-slate-900 bg-slate-950/40 text-[9px] font-bold text-slate-500 uppercase tracking-widest select-none">
+                      <th className="py-2.5 px-4">Extracted Product</th>
+                      <th className="py-2.5 px-4 text-center">Stock</th>
+                      <th className="py-2.5 px-4">Unit Price</th>
+                      <th className="py-2.5 px-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-[11px] font-medium text-slate-300">
+                    {ocrSimProducts.map((p, idx) => (
+                      <tr key={idx} className="border-b border-slate-900/40 hover:bg-slate-900/10 transition">
+                        <td className="py-2.5 px-4 font-bold text-slate-200 capitalize">{p.name}</td>
+                        <td className="py-2.5 px-4 text-center">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400">
+                            {p.quantity} {p.unit}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 font-mono font-bold text-slate-400">₹{p.price}</td>
+                        <td className="py-2.5 px-4">
+                          <span className="text-[9px] font-semibold text-emerald-400 animate-pulse font-bold">
+                            {p.updated}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Logs timeline rendering inside simulator */}
+            <div className="mt-4 border-t border-slate-900 pt-4 text-left">
+              <div className="flex items-center gap-1.5 mb-2 select-none">
+                <Terminal className="w-3.5 h-3.5 text-slate-500" />
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-terminal">OCR Execution Log</span>
+              </div>
+              <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-slate-950/60 border border-slate-900 font-terminal text-[10px] text-slate-400 min-h-[70px]">
+                {ocrSimLogs.map((log, idx) => (
+                  <div key={idx} className={`${
+                    log.startsWith('🟢') ? 'text-emerald-400 font-bold' : 
+                    log.startsWith('✓ Success') ? 'text-emerald-400 font-semibold' :
+                    log.startsWith('📄') ? 'text-slate-200' : 'text-slate-400'
                   }`}>
                     {log}
                   </div>
@@ -568,7 +710,8 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
           </div>
           <div className="flex gap-6">
             <a href="#features" className="hover:text-slate-300 transition">Features</a>
-            <a href="#simulator" className="hover:text-slate-300 transition">Simulator</a>
+            <a href="#voice-simulator" className="hover:text-slate-300 transition">Voice Sim</a>
+            <a href="#ledger-simulator" className="hover:text-slate-300 transition">Ledger Scanner</a>
             <button 
               onClick={onLaunchDemo}
               className="hover:text-slate-300 transition cursor-pointer uppercase font-semibold animate-pulse"
