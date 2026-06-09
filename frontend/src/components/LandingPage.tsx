@@ -16,6 +16,7 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
 
   // Landing Page Voice Simulator States
   const [voiceSimText, setVoiceSimText] = useState('add 12 bags of rice and sold 3 now');
+  const [isListening, setIsListening] = useState(false);
   const [voiceSimStep, setVoiceSimStep] = useState<'idle' | 'analyzing' | 'applying' | 'done'>('idle');
   const [voiceSimProducts, setVoiceSimProducts] = useState([
     { name: 'rice', quantity: 4, unit: 'bags', price: 80, updated: 'Updated 2 hours ago' },
@@ -64,6 +65,48 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
       { name: 'sugar', quantity: 45, unit: 'kg', price: 15, updated: 'Updated yesterday' }
     ]);
     setVoiceSimLogs(['📝 Initialized inventory grid']);
+  };
+
+  const toggleListening = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Web Speech API is not supported in this browser. Please type your command.');
+      return;
+    }
+
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+
+    setIsListening(true);
+    const rec = new SpeechRecognition();
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = 'en-US';
+
+    rec.onstart = () => {
+      setVoiceSimStep('idle');
+      setVoiceSimText('Listening...');
+    };
+
+    rec.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setVoiceSimText(transcript);
+      setIsListening(false);
+    };
+
+    rec.onerror = (event: any) => {
+      console.error('Speech recognition error in simulator:', event.error);
+      setIsListening(false);
+      setVoiceSimText('add 12 bags of rice and sold 3 now');
+    };
+
+    rec.onend = () => {
+      setIsListening(false);
+    };
+
+    rec.start();
   };
 
   // Run Ledger OCR Simulator
@@ -367,14 +410,26 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
             {/* Interactive Input Form */}
             <div className="flex flex-col gap-3">
               <div className="relative">
-                <Mic className="w-4 h-4 text-violet-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  disabled={voiceSimStep !== 'idle'}
+                  className={`absolute left-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition duration-200 cursor-pointer ${
+                    isListening 
+                      ? 'bg-rose-600 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)] hover:bg-rose-500' 
+                      : 'text-violet-400 hover:bg-slate-900 hover:text-violet-350'
+                  }`}
+                  title={isListening ? 'Listening... click to cancel' : 'Click to speak command'}
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
                 <input 
                   type="text"
                   value={voiceSimText}
                   onChange={(e) => setVoiceSimText(e.target.value)}
                   placeholder="Enter speech transcript (e.g. add 10 bags of sugar)..."
                   disabled={voiceSimStep !== 'idle'}
-                  className="w-full pl-10 pr-24 py-2.5 text-xs rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
+                  className="w-full pl-12 pr-24 py-2.5 text-xs rounded-xl glass-input text-slate-200 border border-slate-800/80 focus:border-violet-600/50 outline-none transition"
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1.5">
                   {voiceSimStep !== 'idle' ? (
@@ -482,9 +537,8 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
         </div>
       </section>
 
-      {/* 4b. Interactive Ledger Scanner Simulator Section */}
       <section id="ledger-simulator" className="border-t border-slate-900/60 py-20 relative z-10 bg-slate-950/10">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-12">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row-reverse items-center gap-12">
           
           {/* Left Description Column */}
           <div className="w-full md:w-[45%] flex flex-col items-center md:items-start text-center md:text-left gap-5 select-none">
