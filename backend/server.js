@@ -3,9 +3,13 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const inventoryRouter = require('./routes/inventory');
+//Added upload route for Cloudinary
+const uploadRouter = require('./routes/uploadRoutes');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
 
 // Connect to Database
 connectDB();
@@ -20,6 +24,8 @@ app.use(express.json({ limit: '25mb' }));
 
 // Route mapping
 app.use('/api', inventoryRouter);
+app.use('/api', uploadRouter);
+
 
 // Health check endpoint
 app.get('/health', (req, res) => {
