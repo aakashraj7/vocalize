@@ -5,3 +5,9 @@
 
 [build.environment]
   SECRETS_SCAN_ENABLED = "false"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://vocalize-production.up.railway.app/api/:splat"
+  status = 200
+  force = true
