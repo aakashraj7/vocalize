@@ -1,0 +1,9 @@
+{
+  "name": "vocalize-root",
+  "version": "1.0.0",
+  "description": "Vocalize root project configuration for automated deployment integration",
+  "scripts": {
+    "build": "npm --prefix backend install",
+    "start": "node backend/server.js"
+  }
+}
