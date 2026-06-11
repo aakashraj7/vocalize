@@ -134,6 +134,19 @@ export default function Dashboard({
   const [extractedItems, setExtractedItems] = useState<{ name: string; quantity: number; unit: string; price?: number }[]>([]);
   const [ledgerError, setLedgerError] = useState<string>('');
 
+  // Highlights for updated products (voice or OCR)
+  const [updatedProductIds, setUpdatedProductIds] = useState<string[]>([]);
+  const highlightTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    document.title = "Inventory Database | Vocalize";
+    return () => {
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
   };
@@ -496,6 +509,14 @@ export default function Dashboard({
       if (response.ok && data.success) {
         setProducts(data.products);
         if (data.summaries) setSummaries(data.summaries);
+
+        if (data.updatedProductIds && Array.isArray(data.updatedProductIds)) {
+          setUpdatedProductIds(data.updatedProductIds);
+          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+          highlightTimerRef.current = setTimeout(() => {
+            setUpdatedProductIds([]);
+          }, 8000);
+        }
         
         // Propagate log entry
         if (data.log) {
@@ -573,14 +594,40 @@ export default function Dashboard({
           addTerminalLog(`🤖 Gemini: "${data.conversationalReply}"`);
         }
         addTerminalLog(`✓ Success: ${data.message}`);
-        addTerminalLog(`⚙️ Action: ${data.parsed.actionType} | Product: "${data.parsed.productName}" | Qty: ${data.parsed.numericValue} ${data.parsed.unit}`);
+        if (data.parsedActions && Array.isArray(data.parsedActions)) {
+          data.parsedActions.forEach((act: any) => {
+            addTerminalLog(`⚙️ Action: ${act.actionType} | Product: "${act.productName}" | Qty: ${act.numericValue} ${act.unit}`);
+          });
+        } else {
+          addTerminalLog(`⚙️ Action: ${data.parsed.actionType} | Product: "${data.parsed.productName}" | Qty: ${data.parsed.numericValue} ${data.parsed.unit}`);
+        }
         
         if (data.products) setProducts(data.products);
         if (data.summaries) setSummaries(data.summaries);
 
+        if (data.updatedProductIds && Array.isArray(data.updatedProductIds)) {
+          setUpdatedProductIds(data.updatedProductIds);
+          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+          highlightTimerRef.current = setTimeout(() => {
+            setUpdatedProductIds([]);
+          }, 8000);
+        }
+
         // Prepend new log details directly into the cache for Today
         const todayStr = new Date().toISOString().split('T')[0];
-        if (data.log) {
+        if (data.logs && Array.isArray(data.logs)) {
+          setDetailedLogsCache(prev => {
+            const todayLogs = prev[todayStr] ? [...prev[todayStr]] : [];
+            const logsToPrepend = [...data.logs].reverse();
+            logsToPrepend.forEach((log: any) => {
+              if (!todayLogs.some(l => l._id === log._id)) {
+                todayLogs.unshift(log);
+              }
+            });
+            return { ...prev, [todayStr]: todayLogs };
+          });
+          setExpandedDates(prev => ({ ...prev, [todayStr]: true }));
+        } else if (data.log) {
           setDetailedLogsCache(prev => {
             const todayLogs = prev[todayStr] ? [...prev[todayStr]] : [];
             if (!todayLogs.some(l => l._id === data.log._id)) {
@@ -588,7 +635,6 @@ export default function Dashboard({
             }
             return { ...prev, [todayStr]: todayLogs };
           });
-          // Auto expand Today's chapter to highlight updates
           setExpandedDates(prev => ({ ...prev, [todayStr]: true }));
         }
 
@@ -1368,11 +1414,13 @@ export default function Dashboard({
                       </td>
                     </tr>
                   ) : (
-                    filteredProducts.map(product => (
-                      <tr 
-                        key={product._id} 
-                        className="hover:bg-slate-900/35 transition duration-150 group"
-                      >
+                    filteredProducts.map(product => {
+                      const isHighlighted = updatedProductIds.includes(product._id);
+                      return (
+                        <tr 
+                          key={product._id} 
+                          className={`transition duration-150 group ${isHighlighted ? 'highlight-row-purple' : 'hover:bg-slate-900/35'}`}
+                        >
                         <td className="px-5 py-4 text-sm font-semibold text-slate-200 capitalize max-w-[140px] md:max-w-[200px] lg:max-w-[260px]">
                           <div className="w-full overflow-x-auto whitespace-nowrap product-name-scrollbar pb-1.5">
                             {product.name}
@@ -1445,8 +1493,9 @@ export default function Dashboard({
                           </div>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    );
+                  })
+                )}
                 </tbody>
               </table>
             </div>

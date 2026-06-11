@@ -326,9 +326,13 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
     const parsedActions = await parseVoiceTranscript(transcript, existingProductNames);
     
     let productsUpdated = [];
+    let updatedProductIds = [];
     let lastLog = null;
     let activeProductName = null;
     let lastParsed = null;
+    let localProductCache = {};
+    let savedLogs = [];
+    let auditLogsToCreate = [];
     
     // Execute each parsed action sequentially
     for (const action of parsedActions) {
@@ -362,7 +366,10 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
       let newQty = 0;
       
       if (isDbConnected()) {
-        let product = await Product.findOne({ name: productName, userId });
+        let product = localProductCache[productName];
+        if (!product) {
+          product = await Product.findOne({ name: productName, userId });
+        }
         if (product) {
           oldQty = product.quantity;
           if (finalUnit !== 'pcs' || product.unit === 'pcs') {
@@ -392,6 +399,12 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
         product.quantity = newQty;
         product.updatedAt = new Date();
         await product.save();
+        localProductCache[productName] = product;
+        
+        const prodId = product._id ? product._id.toString() : null;
+        if (prodId && !updatedProductIds.includes(prodId)) {
+          updatedProductIds.push(prodId);
+        }
         
         const quantityChanged = newQty - oldQty;
         let parsedAction = 'SET_STOCK';
@@ -402,24 +415,27 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
                               actionType === 'REMOVE' ? `Subtracted -${finalQty}` : 
                               `Set to ${finalQty}`;
         const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
-        const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
+        const stepSummary = `${displayAction} for "${productName}" (New Total: ${newQty} ${capitalizedUnit})`;
         
-        const auditLog = new AuditLog({
-          originalTranscript: transcript,
+        auditLogsToCreate.push({
+          isMock: false,
+          productName,
           parsedAction,
-          calculationDetail,
-          targetProduct: productName,
           quantityChanged,
           finalQuantity: newQty,
-          userId
+          stepSummary,
+          displayAction,
+          newQty,
+          capitalizedUnit
         });
-        await auditLog.save();
-        lastLog = auditLog;
         
       } else {
         // Mock DB fallback sequential execution
         ensureMockProductsSeeded(userId);
-        let product = mockProducts.find(p => p.name === productName && p.userId === userId);
+        let product = localProductCache[productName];
+        if (!product) {
+          product = mockProducts.find(p => p.name === productName && p.userId === userId);
+        }
         if (product) {
           oldQty = product.quantity;
           if (finalUnit !== 'pcs' || product.unit === 'pcs') {
@@ -449,6 +465,12 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
         
         product.quantity = newQty;
         product.updatedAt = new Date().toISOString();
+        localProductCache[productName] = product;
+        
+        const prodId = product._id ? product._id.toString() : null;
+        if (prodId && !updatedProductIds.includes(prodId)) {
+          updatedProductIds.push(prodId);
+        }
         
         const quantityChanged = newQty - oldQty;
         let parsedAction = 'SET_STOCK';
@@ -459,25 +481,67 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
                               actionType === 'REMOVE' ? `Subtracted -${finalQty}` : 
                               `Set to ${finalQty}`;
         const capitalizedUnit = product.unit.charAt(0).toUpperCase() + product.unit.slice(1);
-        const calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${displayAction} -> New Total: ${newQty} ${capitalizedUnit}`;
+        const stepSummary = `${displayAction} for "${productName}" (New Total: ${newQty} ${capitalizedUnit})`;
         
-        const auditLog = {
-          _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
-          timestamp: new Date().toISOString(),
-          originalTranscript: transcript,
+        auditLogsToCreate.push({
+          isMock: true,
+          productName,
           parsedAction,
-          calculationDetail,
-          targetProduct: productName,
           quantityChanged,
           finalQuantity: newQty,
-          userId
-        };
-        mockLogs.unshift(auditLog);
-        lastLog = auditLog;
+          stepSummary,
+          displayAction,
+          newQty,
+          capitalizedUnit
+        });
       }
       
       if (!productsUpdated.includes(productName)) {
         productsUpdated.push(productName);
+      }
+    }
+    
+    // Create audit logs with combined detail if multi-action
+    if (auditLogsToCreate.length > 0) {
+      let calculationDetail = '';
+      if (auditLogsToCreate.length === 1) {
+        const item = auditLogsToCreate[0];
+        calculationDetail = `🎙️ Spoke: '${transcript}' -> Action: ${item.displayAction} -> New Total: ${item.newQty} ${item.capitalizedUnit}`;
+      } else {
+        const stepsStr = auditLogsToCreate.map((item, idx) => `[${idx + 1}] ${item.stepSummary}`).join(' then ');
+        calculationDetail = `🎙️ Spoke: '${transcript}' -> Chained Actions: ${stepsStr}`;
+      }
+      
+      for (const item of auditLogsToCreate) {
+        if (!item.isMock) {
+          const auditLog = new AuditLog({
+            originalTranscript: transcript,
+            parsedAction: item.parsedAction,
+            calculationDetail,
+            targetProduct: item.productName,
+            quantityChanged: item.quantityChanged,
+            finalQuantity: item.finalQuantity,
+            userId
+          });
+          await auditLog.save();
+          lastLog = auditLog;
+          savedLogs.push(auditLog);
+        } else {
+          const auditLog = {
+            _id: 'mock_l_' + Math.random().toString(36).substr(2, 9),
+            timestamp: new Date().toISOString(),
+            originalTranscript: transcript,
+            parsedAction: item.parsedAction,
+            calculationDetail,
+            targetProduct: item.productName,
+            quantityChanged: item.quantityChanged,
+            finalQuantity: item.finalQuantity,
+            userId
+          };
+          mockLogs.unshift(auditLog);
+          lastLog = auditLog;
+          savedLogs.push(auditLog);
+        }
       }
     }
     
@@ -513,6 +577,9 @@ router.post('/voice-command', authMiddleware, async (req, res) => {
       promptForPrice,
       conversationalReply: null,
       log: lastLog,
+      logs: savedLogs,
+      updatedProductIds,
+      parsedActions,
       parsed: lastParsed || {
         productName: 'unknown',
         actionType: 'UNKNOWN',
@@ -880,7 +947,13 @@ router.post('/products/bulk', authMiddleware, async (req, res) => {
     }
 
     const { products, summaries } = await getFreshProductsAndSummaries(userId);
-    res.json({ success: true, products, summaries, log: savedLog });
+    res.json({ 
+      success: true, 
+      products, 
+      summaries, 
+      log: savedLog,
+      updatedProductIds: insertedProducts.map(p => p._id ? p._id.toString() : '')
+    });
   } catch (error) {
     console.error('Error in bulk import route:', error);
     res.status(500).json({ error: 'Server error processing bulk import' });

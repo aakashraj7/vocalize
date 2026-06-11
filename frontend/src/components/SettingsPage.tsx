@@ -57,6 +57,11 @@ export default function SettingsPage({
   const [deleteInputCode, setDeleteInputCode] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Set document title
+  useEffect(() => {
+    document.title = "Account Settings | Vocalize";
+  }, []);
+
   // Sync state with user data
   useEffect(() => {
     if (user) {

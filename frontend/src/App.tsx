@@ -479,7 +479,13 @@ export default function App() {
       <Routes>
         <Route 
           path="/" 
-          element={<LandingPage onLaunchDemo={launchDemoMode} />} 
+          element={
+            <LandingPage 
+              onLaunchDemo={launchDemoMode} 
+              user={user} 
+              onSignOut={handleSignOut} 
+            />
+          } 
         />
         <Route 
           path="/login" 

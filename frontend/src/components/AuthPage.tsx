@@ -49,6 +49,7 @@ export default function AuthPage({
   // Clear errors when swapping route views
   useEffect(() => {
     setError(null);
+    document.title = authMode === 'signin' ? "Sign In | Vocalize" : "Get Started | Vocalize";
   }, [authMode, setError]);
 
   const handleSubmit = (e: FormEvent) => {

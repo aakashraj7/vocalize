@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Sparkles, Play, Mic, Activity, ArrowRight, ShieldCheck, Terminal, UploadCloud, Target, Cpu, FileText 
@@ -10,10 +10,16 @@ import logoWithoutText from '../assets/vocalize-logo-without-text.png';
 
 interface LandingPageProps {
   onLaunchDemo: () => void;
+  user: any;
+  onSignOut: () => Promise<void>;
 }
 
-export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
+export default function LandingPage({ onLaunchDemo, user, onSignOut }: LandingPageProps) {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    document.title = "Vocalize - Voice-First Retail Stock Manager";
+  }, []);
 
   // Helper to parse voice logs for high fidelity timestamps and text
   const getVoiceLogDetails = (log: string) => {
@@ -246,28 +252,41 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
               <a href="#voice-simulator" className="hover:text-white transition">Voice Simulator</a>
               <a href="#ledger-simulator" className="hover:text-white transition">Ledger Scanner</a>
               <a href="#testimonials" className="hover:text-white transition">Reviews</a>
-              <button 
-                onClick={onLaunchDemo}
-                className="hover:text-violet-400 transition text-left cursor-pointer font-semibold"
-              >
-                Instant Sandbox Demo
-              </button>
             </nav>
 
             {/* Auth Buttons */}
             <div className="flex items-center gap-3">
-              <button 
-                onClick={() => navigate('/login')}
-                className="px-4 py-1.5 text-sm font-bold text-slate-300 hover:text-white transition cursor-pointer"
-              >
-                Sign In
-              </button>
-              <button 
-                onClick={() => navigate('/signup')}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-violet-600/10 hover:shadow-violet-600/20 transition cursor-pointer"
-              >
-                Get Started
-              </button>
+              {user ? (
+                <>
+                  <button 
+                    onClick={() => navigate('/dashboard')}
+                    className="px-4 py-1.5 text-sm font-bold text-slate-300 hover:text-white transition cursor-pointer"
+                  >
+                    Dashboard
+                  </button>
+                  <button 
+                    onClick={onSignOut}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-600/10 hover:shadow-rose-600/20 transition cursor-pointer"
+                  >
+                    Sign Out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => navigate('/login')}
+                    className="px-4 py-1.5 text-sm font-bold text-slate-300 hover:text-white transition cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+                  <button 
+                    onClick={() => navigate('/signup')}
+                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-violet-600/10 hover:shadow-violet-600/20 transition cursor-pointer"
+                  >
+                    Get Started
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </header>
@@ -299,11 +318,11 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
           
           <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto mt-2">
             <button 
-              onClick={() => navigate('/signup')}
+              onClick={() => navigate(user ? '/dashboard' : '/signup')}
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/25 transition cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-white/90" />
-              Start Free Sandbox
+              {user ? 'Go to Dashboard' : 'Start Free Sandbox'}
               <ArrowRight className="w-4 h-4" />
             </button>
             <button 
@@ -1237,10 +1256,10 @@ export default function LandingPage({ onLaunchDemo }: LandingPageProps) {
             Launch a free local sandbox profile to start tracking metrics instantly. No credit card, no complex setups, fully optimized out of the box.
           </p>
           <button 
-            onClick={() => navigate('/signup')}
+            onClick={() => navigate(user ? '/dashboard' : '/signup')}
             className="flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/25 transition cursor-pointer"
           >
-            Sign Up Now
+            {user ? 'Go to Dashboard' : 'Sign Up Now'}
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

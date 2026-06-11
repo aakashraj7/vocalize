@@ -382,7 +382,7 @@ const parseVoiceTranscript = async (transcript, existingProductNames = []) => {
 
     const result = await chat.sendMessage(transcript);
     const response = result.response;
-    const functionCalls = response.functionCalls;
+    const functionCalls = response.functionCalls();
 
     if (functionCalls && functionCalls.length > 0) {
       const parsedActions = [];

@@ -236,7 +236,30 @@
   animation: minimal-flip 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Purple highlight animation for updated inventory records */
+@keyframes highlight-purple-pulse {
+  0%, 100% {
+    background-color: rgba(168, 85, 247, 0.08);
+    box-shadow: inset 0 0 12px rgba(168, 85, 247, 0.15);
+  }
+  50% {
+    background-color: rgba(168, 85, 247, 0.22);
+    box-shadow: inset 0 0 24px rgba(168, 85, 247, 0.35);
+  }
+}
 
+.highlight-row-purple {
+  animation: highlight-purple-pulse 2s infinite ease-in-out;
+  position: relative;
+  transition: all 0.5s ease;
+}
 
+/* Add a glowing left border line to the first td cell of the highlighted row */
+.highlight-row-purple td {
+  border-top: 1px solid rgba(168, 85, 247, 0.3) !important;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.3) !important;
+}
 
-
+.highlight-row-purple td:first-child {
+  border-left: 3px solid #a855f7 !important;
+}
