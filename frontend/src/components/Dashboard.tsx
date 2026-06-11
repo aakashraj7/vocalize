@@ -161,7 +161,7 @@ export default function Dashboard({
   }, [toast]);
 
   const recognitionRef = useRef<any>(null);
-  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -207,9 +207,14 @@ export default function Dashboard({
     fetchData();
   }, []);
 
-  // Scroll terminal to bottom
+  // Scroll terminal container to bottom smoothly without shifting browser viewport
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTo({
+        top: terminalContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
   }, [terminalLogs]);
 
   const addTerminalLog = (message: string) => {
@@ -959,7 +964,7 @@ export default function Dashboard({
                 </div>
                 
                 {/* Terminal Lines Container */}
-                <div className="flex-1 overflow-y-auto font-terminal text-[11px] leading-relaxed text-slate-400 pr-1 flex flex-col gap-1.5 scrollbar-thin">
+                <div ref={terminalContainerRef} className="flex-1 overflow-y-auto font-terminal text-[11px] leading-relaxed text-slate-400 pr-1 flex flex-col gap-1.5 scrollbar-thin">
                   {/* Print initial ready prompt in terminal if no logs */}
                   {terminalLogs.length === 0 ? (
                     <div className="text-slate-400">
@@ -1036,8 +1041,6 @@ export default function Dashboard({
                       </div>
                     </form>
                   )}
-                  
-                  <div ref={terminalEndRef} />
                 </div>
               </div>
 
