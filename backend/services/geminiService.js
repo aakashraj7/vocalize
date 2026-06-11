@@ -301,7 +301,7 @@ const classifyIntent = async (transcript) => {
 
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       systemInstruction: "You are an intent classifier for a store keeper's dashboard. Classify the user's spoken or typed prompt into one of two intents:\n- 'CONVERSATION': for greetings (e.g. 'hi', 'hello', 'hey', and phonetic spelling typos like 'hai', 'hii', 'hy', 'hlo', 'hey there'; general questions; testing statements; thanks; conversational chit-chat; or unrelated queries).\n- 'COMMAND': ONLY if the statement contains an explicit transaction instruction to add, remove, sell, buy, adjust, or set stock levels of a product. If a statement is a single word like 'hai' or 'hello' and contains no transaction intent, it MUST be classified as 'CONVERSATION'.\nReturn strictly in JSON format matching this schema: { \"intent\": \"CONVERSATION\" | \"COMMAND\" }.",
     });
 
@@ -340,7 +340,7 @@ const generateDynamicReply = async (transcript) => {
 
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       systemInstruction: "You are Vocalize, a friendly and helpful conversational assistant for a shopkeeper. Reply to the merchant's greeting, statement, question, or query in a direct, friendly, and concise manner (maximum 1-2 sentences). Do not mention technical tools, database schemas, or code details. Keep it natural and simple.",
     });
 
@@ -366,7 +366,7 @@ const parseVoiceTranscript = async (transcript, existingProductNames = []) => {
       : '';
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       systemInstruction: `You are an inventory data extraction assistant. Map the merchant's transaction command(s) to one or more updateInventory function tool calls. Extract the product name, action type (ADD, REMOVE, or SET), the numeric quantity, and the unit of measurement. Note: Resolve pronouns or reference words (like "it", "them", "now", "of them") or omitted product names using the previous clause context if applicable.${listContext}`,
     });
 
@@ -382,7 +382,7 @@ const parseVoiceTranscript = async (transcript, existingProductNames = []) => {
 
     const result = await chat.sendMessage(transcript);
     const response = result.response;
-    const functionCalls = response.functionCalls;
+    const functionCalls = response.functionCalls();
 
     if (functionCalls && functionCalls.length > 0) {
       const parsedActions = [];
@@ -415,6 +415,71 @@ const parseVoiceTranscript = async (transcript, existingProductNames = []) => {
   }
 };
 
+const analyzeLedgerSheet = async (base64Data, mimeType) => {
+  if (!isApiKeyConfigured) {
+    console.log('Gemini API key is unconfigured. Returning mock fallback ledger items.');
+    return [
+      { name: 'biscuit packs', quantity: 15, unit: 'packs', price: 10 },
+      { name: 'cooking oil', quantity: 8, unit: 'bottles', price: 120 },
+      { name: 'soap bars', quantity: 24, unit: 'pcs', price: 30 }
+    ];
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash-lite',
+      systemInstruction: "You are an expert inventory data extractor. Analyze the uploaded image or document containing a handwritten or printed shop ledger. Extract all products, their quantities, their units of measurement (e.g. 'kg', 'pcs', 'bags', 'bottles'), and their unit price if listed. Keep product names singular, lowercase, and short. Format your response strictly as a JSON object matching this schema: { \"items\": [ { \"name\": \"product name\", \"quantity\": 10, \"unit\": \"pcs\", \"price\": 1.50 } ] }.",
+    });
+
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: 'Please extract all the inventory items from this ledger.'
+            },
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType
+              }
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            items: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  name: { type: 'STRING', description: 'Product name, singularized and lowercase.' },
+                  quantity: { type: 'NUMBER', description: 'Stock quantity.' },
+                  unit: { type: 'STRING', description: 'Unit type, e.g. pcs, bags, kg. Default to pcs.' },
+                  price: { type: 'NUMBER', description: 'Unit price, optional.' }
+                },
+                required: ['name', 'quantity', 'unit']
+              }
+            }
+          },
+          required: ['items']
+        }
+      }
+    });
+
+    const data = JSON.parse(result.response.text().trim());
+    return data.items || [];
+  } catch (error) {
+    console.error('Error analyzing ledger sheet:', error);
+    throw new Error(`Gemini API Failed: ${error.message || error}`);
+  }
+};
+
 module.exports = {
   parseVoiceTranscript,
   classifyIntent,
@@ -422,5 +487,6 @@ module.exports = {
   regexParser,
   cleanProductName,
   isPronounOrFiller,
-  findFuzzyMatch
+  findFuzzyMatch,
+  analyzeLedgerSheet
 };

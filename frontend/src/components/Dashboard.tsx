@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Mic, MicOff, Search, ArrowUpDown, RefreshCw, 
   LogOut, Database, Terminal, Clock, Sparkles, 
-  Play, User, Calendar, Plus, Trash2, Edit2, X,
-  AlertTriangle, CheckCircle2
+  User, Calendar, Plus, Trash2, Edit2, X,
+  AlertTriangle, CheckCircle2, Settings, Globe, UploadCloud,
+  LayoutGrid, XCircle, Package, Send
 } from 'lucide-react';
+import logoWithoutText from '../assets/vocalize-logo-without-text.png';
 
 interface Product {
   _id: string;
@@ -30,13 +33,54 @@ interface DashboardProps {
   user: {
     email: string | null;
     displayName: string | null;
+    shopName?: string;
     uid: string;
     isDemo?: boolean;
+    category?: string;
+    currency?: string;
+    language?: string;
   };
   onSignOut: () => void;
 }
 
-export default function Dashboard({ user, onSignOut }: DashboardProps) {
+const getCurrencySymbol = (currencyCode: string | undefined): string => {
+  switch (currencyCode) {
+    case 'USD':
+      return '$';
+    case 'EUR':
+      return '€';
+    case 'GBP':
+      return '£';
+    case 'INR':
+    default:
+      return '₹';
+  }
+};
+
+const getLanguageCode = (languageName: string | undefined): string => {
+  switch (languageName) {
+    case 'English (Indian Dialect)':
+      return 'en-IN';
+    case 'Hindi (हिंदी)':
+      return 'hi-IN';
+    case 'Spanish (Español)':
+      return 'es-ES';
+    case 'French (Français)':
+      return 'fr-FR';
+    case 'German (Deutsch)':
+      return 'de-DE';
+    case 'English (Standard)':
+    default:
+      return 'en-US';
+  }
+};
+
+export default function Dashboard({ 
+  user, 
+  onSignOut
+}: DashboardProps) {
+  const currencySymbol = getCurrencySymbol(user.currency);
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   
   // New Lazy Loading & Caching State
@@ -61,6 +105,8 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
   const [formError, setFormError] = useState('');
   const [savingForm, setSavingForm] = useState(false);
 
+  // Profile settings modal state removed (redirects to dedicated settings page)
+
   const [loading, setLoading] = useState<boolean>(true);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [terminalState, setTerminalState] = useState<'idle' | 'listening' | 'transcribing' | 'processing' | 'success' | 'error'>('idle');
@@ -79,6 +125,27 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
 
   // Custom toast notification state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Ledger OCR modal state
+  const [isLedgerModalOpen, setIsLedgerModalOpen] = useState(false);
+
+  // Ledger OCR upload states
+  const [isProcessingLedger, setIsProcessingLedger] = useState(false);
+  const [extractedItems, setExtractedItems] = useState<{ name: string; quantity: number; unit: string; price?: number }[]>([]);
+  const [ledgerError, setLedgerError] = useState<string>('');
+
+  // Highlights for updated products (voice or OCR)
+  const [updatedProductIds, setUpdatedProductIds] = useState<string[]>([]);
+  const highlightTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    document.title = "Inventory Database | Vocalize";
+    return () => {
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -103,7 +170,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
       const rec = new SpeechRecognition();
       rec.continuous = false;
       rec.interimResults = false;
-      rec.lang = 'en-US';
+      rec.lang = getLanguageCode(user.language);
 
       rec.onstart = () => {
         setIsListening(true);
@@ -197,7 +264,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
     }
 
     setSubmittingPrice(true);
-    addTerminalLog(`💾 Saving price ₹${priceVal} for product "${pricePromptProduct}"...`);
+    addTerminalLog(`💾 Saving price ${currencySymbol}${priceVal} for product "${pricePromptProduct}"...`);
 
     try {
       const response = await fetch('/api/products/set-price', {
@@ -208,7 +275,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
 
       const data = await response.json();
       if (response.ok && data.success) {
-        addTerminalLog(`✓ Success: Price for "${pricePromptProduct}" updated to ₹${priceVal}.`);
+        addTerminalLog(`✓ Success: Price for "${pricePromptProduct}" updated to ${currencySymbol}${priceVal}.`);
         if (data.products) setProducts(data.products);
         if (data.summaries) setSummaries(data.summaries);
         setPricePromptProduct(null);
@@ -358,6 +425,128 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
     }
   };
 
+  const handleLedgerFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    
+    // Validate file size (20MB limit)
+    if (file.size > 20 * 1024 * 1024) {
+      setLedgerError('File exceeds the 20MB size limit.');
+      return;
+    }
+    
+    // Validate file type
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'application/pdf'];
+    if (!validTypes.includes(file.type)) {
+      setLedgerError('Unsupported file type. Please upload PNG, JPG, JPEG, WEBP, or PDF.');
+      return;
+    }
+    
+    setIsProcessingLedger(true);
+    setLedgerError('');
+    setExtractedItems([]);
+    
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64 = reader.result as string;
+        const response = await fetch('/api/products/upload-ledger', {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({ fileData: base64, mimeType: file.type })
+        });
+        
+        const data = await response.json();
+        if (response.ok && data.success) {
+          setExtractedItems(data.items || []);
+          addTerminalLog(`✓ OCR: Extracted ${data.items?.length || 0} items from ledger file.`);
+        } else {
+          setLedgerError(data.error || 'Failed to analyze the ledger sheet.');
+        }
+      } catch (err: any) {
+        setLedgerError(err.message || 'Error processing ledger upload.');
+      } finally {
+        setIsProcessingLedger(false);
+      }
+    };
+    
+    reader.onerror = () => {
+      setLedgerError('Error reading file.');
+      setIsProcessingLedger(false);
+    };
+    
+    reader.readAsDataURL(file);
+  };
+
+  const handleUpdateExtractedItem = (index: number, field: string, value: any) => {
+    setExtractedItems(prev => prev.map((item, idx) => {
+      if (idx === index) {
+        return { ...item, [field]: value };
+      }
+      return item;
+    }));
+  };
+
+  const handleRemoveExtractedItem = (index: number) => {
+    setExtractedItems(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleImportLedgerItems = async () => {
+    if (extractedItems.length === 0) return;
+    
+    setIsProcessingLedger(true);
+    setLedgerError('');
+    
+    try {
+      const response = await fetch('/api/products/bulk', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ items: extractedItems })
+      });
+      
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setProducts(data.products);
+        if (data.summaries) setSummaries(data.summaries);
+
+        if (data.updatedProductIds && Array.isArray(data.updatedProductIds)) {
+          setUpdatedProductIds(data.updatedProductIds);
+          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+          highlightTimerRef.current = setTimeout(() => {
+            setUpdatedProductIds([]);
+          }, 8000);
+        }
+        
+        // Propagate log entry
+        if (data.log) {
+          const todayStr = new Date().toISOString().split('T')[0];
+          setDetailedLogsCache(prev => {
+            const todayLogs = prev[todayStr] ? [...prev[todayStr]] : [];
+            if (!todayLogs.some(l => l._id === data.log._id)) {
+              todayLogs.unshift(data.log);
+            }
+            return { ...prev, [todayStr]: todayLogs };
+          });
+          setExpandedDates(prev => ({ ...prev, [todayStr]: true }));
+        }
+        
+        showToast(`Successfully imported ${extractedItems.length} items to inventory.`);
+        addTerminalLog(`✓ Success: Bulk imported ${extractedItems.length} items into database.`);
+        
+        // Close modal
+        setIsLedgerModalOpen(false);
+        setExtractedItems([]);
+      } else {
+        setLedgerError(data.error || 'Failed to bulk import products.');
+      }
+    } catch (err: any) {
+      setLedgerError(err.message || 'Network error executing bulk import.');
+    } finally {
+      setIsProcessingLedger(false);
+    }
+  };
+
   const handleOpenAddModal = () => {
     setModalMode('add');
     setFormProductId('');
@@ -405,14 +594,40 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
           addTerminalLog(`🤖 Gemini: "${data.conversationalReply}"`);
         }
         addTerminalLog(`✓ Success: ${data.message}`);
-        addTerminalLog(`⚙️ Action: ${data.parsed.actionType} | Product: "${data.parsed.productName}" | Qty: ${data.parsed.numericValue} ${data.parsed.unit}`);
+        if (data.parsedActions && Array.isArray(data.parsedActions)) {
+          data.parsedActions.forEach((act: any) => {
+            addTerminalLog(`⚙️ Action: ${act.actionType} | Product: "${act.productName}" | Qty: ${act.numericValue} ${act.unit}`);
+          });
+        } else {
+          addTerminalLog(`⚙️ Action: ${data.parsed.actionType} | Product: "${data.parsed.productName}" | Qty: ${data.parsed.numericValue} ${data.parsed.unit}`);
+        }
         
         if (data.products) setProducts(data.products);
         if (data.summaries) setSummaries(data.summaries);
 
+        if (data.updatedProductIds && Array.isArray(data.updatedProductIds)) {
+          setUpdatedProductIds(data.updatedProductIds);
+          if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+          highlightTimerRef.current = setTimeout(() => {
+            setUpdatedProductIds([]);
+          }, 8000);
+        }
+
         // Prepend new log details directly into the cache for Today
         const todayStr = new Date().toISOString().split('T')[0];
-        if (data.log) {
+        if (data.logs && Array.isArray(data.logs)) {
+          setDetailedLogsCache(prev => {
+            const todayLogs = prev[todayStr] ? [...prev[todayStr]] : [];
+            const logsToPrepend = [...data.logs].reverse();
+            logsToPrepend.forEach((log: any) => {
+              if (!todayLogs.some(l => l._id === log._id)) {
+                todayLogs.unshift(log);
+              }
+            });
+            return { ...prev, [todayStr]: todayLogs };
+          });
+          setExpandedDates(prev => ({ ...prev, [todayStr]: true }));
+        } else if (data.log) {
           setDetailedLogsCache(prev => {
             const todayLogs = prev[todayStr] ? [...prev[todayStr]] : [];
             if (!todayLogs.some(l => l._id === data.log._id)) {
@@ -420,7 +635,6 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
             }
             return { ...prev, [todayStr]: todayLogs };
           });
-          // Auto expand Today's chapter to highlight updates
           setExpandedDates(prev => ({ ...prev, [todayStr]: true }));
         }
 
@@ -556,77 +770,143 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
     <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col selection:bg-violet-600/30">
       
       {/* Header */}
-      <header className="border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md sticky top-0 z-40 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-tr from-violet-600 to-fuchsia-600 rounded-xl shadow-lg shadow-violet-500/20">
-            <Database className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-300">
-              Vocalize
-            </h1>
-            <p className="text-[10px] text-slate-500 font-medium tracking-widest uppercase">
-              AI Voice Inventory Log
-            </p>
-          </div>
-        </div>
+      <header className="px-6 pt-6 pb-2 bg-[#090d16]/70">
+        <div className="relative bg-[#060814]/85 backdrop-blur-xl border border-slate-800/80 rounded-3xl px-6 py-4 shadow-[0_20px_45px_-15px_rgba(0,0,0,0.9),_inset_0_1px_1px_rgba(255,255,255,0.03)] flex items-center justify-between overflow-hidden">
+          
+          {/* Subtle top/bottom gradient lines for premium neon glow */}
+          <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
+          <div className="absolute bottom-0 left-8 right-8 h-[1px] bg-gradient-to-r from-transparent via-violet-500/50 to-transparent" />
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 bg-slate-900/60 border border-slate-800/80 px-4 py-1.5 rounded-full">
-            <div className="p-1 bg-violet-500/10 text-violet-400 rounded-full">
-              <User className="w-4 h-4" />
+          {/* Logo and title */}
+          <div className="flex items-center gap-3.5 relative z-10">
+            <div className="relative w-12 h-12 flex items-center justify-center rounded-2xl bg-[#090b14] border border-cyan-500/30 shadow-[0_0_20px_-3px_rgba(34,211,238,0.4)] overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-tr from-violet-600/10 to-cyan-500/10" />
+              <img src={logoWithoutText} alt="Vocalize Logo" className="w-8 h-8 object-contain filter drop-shadow-[0_0_8px_rgba(124,58,237,0.5)]" />
             </div>
-            <div className="text-left">
-              <p className="text-xs font-medium text-slate-300">
-                {user.displayName || user.email?.split('@')[0] || 'Store Owner'}
-              </p>
-              <p className="text-[9px] text-slate-500 font-semibold uppercase">
-                {user.isDemo ? 'Demo Mode' : 'Production'}
+            <div>
+              <div className="flex items-center">
+                <h1 className="text-xl font-black tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-300 animate-pulse">
+                  Vocalize
+                </h1>
+                {/* Small animated soundwave next to Vocalize logo */}
+                <div className="flex items-end gap-0.5 h-3.5 ml-2.5 mb-1">
+                  <div className="w-0.5 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.1s', animationDuration: '0.7s' }} />
+                  <div className="w-0.5 bg-cyan-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.3s', animationDuration: '0.9s' }} />
+                  <div className="w-0.5 bg-fuchsia-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.5s', animationDuration: '0.6s' }} />
+                  <div className="w-0.5 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.2s', animationDuration: '0.8s' }} />
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium tracking-widest mt-1 uppercase">
+                AI Voice Inventory Log
               </p>
             </div>
           </div>
 
-          <button 
-            onClick={onSignOut}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-slate-400 hover:text-white bg-slate-900/40 hover:bg-rose-950/20 border border-slate-800/80 hover:border-rose-900/30 rounded-xl transition duration-200 cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Sign Out
-          </button>
+          {/* Right details group */}
+          <div className="flex items-center gap-4 relative z-10">
+            {/* Separate Language Badge */}
+            <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-950/60 border border-violet-500/30 shadow-[0_0_15px_rgba(139,92,246,0.15)] rounded-full text-[10px] font-extrabold tracking-wider uppercase text-slate-200">
+              <Globe className="w-3.5 h-3.5 text-violet-400" />
+              {(user.language || 'English').toUpperCase()}
+            </div>
+
+            {/* Vertical divider */}
+            <div className="hidden md:block w-[1px] h-8 bg-slate-800/60" />
+
+            {/* Profile Badge (Clean layout showing Name and Shop Name only) */}
+            <div className="flex items-center gap-3 bg-[#090b14] border border-slate-800 px-4 py-2 rounded-2xl">
+              {/* Person avatar circle with glowing border */}
+              <div className="w-9 h-9 rounded-full bg-slate-950 border border-violet-500/40 shadow-[0_0_12px_rgba(139,92,246,0.4)] flex items-center justify-center text-violet-400">
+                <User className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold text-white tracking-wide">
+                  {user.displayName || 'Store Owner'}
+                </p>
+                {user.shopName && (
+                  <p className="text-[10px] text-slate-400 font-medium truncate max-w-[140px] mt-0.5">
+                    {user.shopName}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Vertical divider */}
+            <div className="hidden sm:block w-[1px] h-8 bg-slate-800/60" />
+
+            {/* Dedicated Settings Button */}
+            <button 
+              onClick={() => navigate('/settings')}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-350 hover:text-white transition duration-200 cursor-pointer"
+            >
+              <Settings className="w-4 h-4 text-violet-400" />
+              Settings
+            </button>
+
+            {/* Sign Out Button (Gradient filled capsule button) */}
+            <button 
+              onClick={onSignOut}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition duration-200 cursor-pointer shadow-lg shadow-violet-900/20 active:scale-95 whitespace-nowrap"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Grid Workspace */}
       <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] w-full mx-auto">
-        
-        {/* Left Hand side Panel: Terminal & Mic, and Audit Timeline (4 Columns) */}
-        <div className="lg:col-span-4 flex flex-col gap-6 h-full min-h-0">
+            {/* Left Hand side Panel: Terminal & Mic, and Audit Timeline (4 Columns) */}
+            <div className="lg:col-span-4 flex flex-col gap-6 h-full min-h-0">
           
           {/* Section A: Command Center (Voice Logger Terminal) */}
-          <section className="glass-card rounded-2xl p-5 border border-slate-800/60 relative overflow-hidden flex flex-col">
-            <div className="absolute top-0 right-0 p-3 text-[10px] text-slate-700 font-terminal">
+          <section className="glass-card rounded-3xl p-6 border border-slate-800/60 relative overflow-hidden flex flex-col gap-5">
+            {/* Version Badge Top Right */}
+            <div className="absolute top-6 right-6 px-3 py-1 rounded-full border border-slate-800 bg-slate-950/40 text-[10px] font-bold text-slate-500 font-mono select-none">
               v1.0.0
             </div>
             
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles className="w-4 h-4 text-violet-400" />
-              <h2 className="text-sm font-bold tracking-wide uppercase text-slate-400">
-                Command Center
+            {/* Title Header */}
+            <div className="flex items-center gap-2 mb-1">
+              <Sparkles className="w-5 h-5 text-violet-400" />
+              <h2 className="text-sm font-black tracking-wider uppercase text-white">
+                COMMAND <span className="text-violet-500">CENTER</span>
               </h2>
             </div>
 
-            {/* Glowing Microphone button container */}
-            <div className="flex flex-col items-center justify-center py-6 relative">
+            {/* Concentric Microphone button and soundwaves */}
+            <div className="flex items-center justify-center gap-6 py-4 relative select-none">
+              
+              {/* Left Side: Mock Soundwave bars */}
+              <div className="flex items-center gap-0.5 opacity-30">
+                <div className="w-0.5 h-2.5 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-5 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-3.5 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-6 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.1s', animationDuration: '0.7s' }} />
+                <div className="w-0.5 h-3 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-4.5 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.3s', animationDuration: '0.9s' }} />
+                <div className="w-0.5 h-2 bg-violet-400 rounded-full" />
+              </div>
+
+              {/* Concentric Microphone Trigger */}
               <div className="relative flex items-center justify-center">
-                {isListening && (
-                  <div className="absolute w-24 h-24 rounded-full bg-violet-600/20 animate-ripple z-0" />
-                )}
+                {/* Concentric circle 1 (Outer glow ring) */}
+                <div className={`absolute rounded-full border border-violet-500/10 flex items-center justify-center transition-all duration-300 w-28 h-28 ${
+                  isListening ? 'shadow-[0_0_35px_rgba(239,68,68,0.25)] border-rose-500/25 animate-ping' : 'shadow-[0_0_25px_rgba(139,92,246,0.1)]'
+                }`} />
+                {/* Concentric circle 2 (Inner outline border) */}
+                <div className={`absolute rounded-full border border-violet-500/20 flex items-center justify-center transition-all duration-300 w-24 h-24 ${
+                  isListening ? 'border-rose-500/40 shadow-[0_0_30px_rgba(239,68,68,0.3)]' : 'shadow-[0_0_20px_rgba(139,92,246,0.15)]'
+                }`} />
+
+                {/* Inner Gradient Mic Button */}
                 <button
                   onClick={toggleListening}
-                  className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl cursor-pointer ${
+                  className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl cursor-pointer hover:scale-105 active:scale-95 ${
                     isListening 
-                      ? 'bg-rose-500 text-white animate-pulse-glow shadow-rose-500/20' 
-                      : 'bg-gradient-to-tr from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-500/20 hover:scale-105'
+                      ? 'bg-gradient-to-tr from-rose-600 to-red-500 text-white shadow-rose-500/30' 
+                      : 'bg-gradient-to-tr from-violet-600 to-blue-600 hover:from-violet-500 hover:to-blue-500 text-white shadow-violet-500/30'
                   }`}
                   title={isListening ? 'Click to stop recording' : 'Click to speak inventory command'}
                 >
@@ -637,47 +917,79 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                   )}
                 </button>
               </div>
-              <p className="mt-4 text-xs font-semibold text-slate-300">
+
+              {/* Right Side: Mock Soundwave bars */}
+              <div className="flex items-center gap-0.5 opacity-30">
+                <div className="w-0.5 h-2 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-4.5 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.2s', animationDuration: '0.8s' }} />
+                <div className="w-0.5 h-3 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-6 bg-violet-400 rounded-full animate-soundwave-mini" style={{ animationDelay: '0.4s', animationDuration: '0.6s' }} />
+                <div className="w-0.5 h-3.5 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-5 bg-violet-400 rounded-full" />
+                <div className="w-0.5 h-2.5 bg-violet-400 rounded-full" />
+              </div>
+
+            </div>
+
+            {/* Instruction Speech text */}
+            <div className="text-center mb-1">
+              <p className="text-xs font-semibold text-slate-350 select-none">
                 {isListening ? (
-                  <span className="text-rose-400 animate-pulse font-terminal">LISTENING ACTIVELY...</span>
+                  <span className="text-rose-400 animate-pulse font-terminal tracking-wider uppercase">Listening actively... Speak now</span>
                 ) : (
-                  <span>Click mic and say: <span className="text-violet-400 italic">"Add 10 bags of flour"</span></span>
+                  <span>Click mic and say: <span className="text-violet-400 font-medium italic">"Add 10 bags of flour"</span></span>
                 )}
               </p>
             </div>
 
-            {/* Floating Interactive Terminal Window */}
-            <div className="flex-1 flex flex-col mt-2">
-              <div className="terminal-window rounded-xl p-4 flex-1 flex flex-col min-h-[200px] max-h-[280px]">
+            {/* Terminal Window Logger */}
+            <div className="flex-1 flex flex-col mt-1">
+              <div className="rounded-2xl p-4 flex-1 flex flex-col min-h-[220px] max-h-[280px] bg-slate-950/80 border border-slate-800/80 relative shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] overflow-hidden">
                 {/* Terminal Header */}
-                <div className="flex items-center justify-between border-b border-slate-900 pb-2 mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+                <div className="flex items-center justify-between border-b border-slate-900 pb-2.5 mb-2.5">
+                  <div className="flex items-center gap-1.5 select-none">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                   </div>
                   <div className="flex items-center gap-1 text-[10px] text-slate-500 font-terminal">
-                    <Terminal className="w-3.5 h-3.5" />
+                    <Terminal className="w-3.5 h-3.5 text-violet-400" />
                     realtime_voice_logger.sh
                   </div>
                 </div>
                 
                 {/* Terminal Lines Container */}
                 <div className="flex-1 overflow-y-auto font-terminal text-[11px] leading-relaxed text-slate-400 pr-1 flex flex-col gap-1.5 scrollbar-thin">
-                  {terminalLogs.map((logLine, idx) => {
-                    let color = 'text-slate-400';
-                    if (logLine.includes('✓ Success')) color = 'text-emerald-400 font-semibold';
-                    else if (logLine.includes('❌') || logLine.includes('⚠️')) color = 'text-rose-400';
-                    else if (logLine.includes('🎙️ Listening')) color = 'text-violet-400';
-                    else if (logLine.includes('✍️ Transcribed')) color = 'text-blue-300';
-                    else if (logLine.includes('🤖 Gemini AI') || logLine.includes('🤖 Gemini:') || logLine.includes('⚙️ Action')) color = 'text-indigo-300';
-                    
-                    return (
-                      <div key={idx} className={color}>
-                        {logLine}
-                      </div>
-                    );
-                  })}
+                  {/* Print initial ready prompt in terminal if no logs */}
+                  {terminalLogs.length === 0 ? (
+                    <div className="text-slate-400">
+                      <span className="text-violet-400 font-bold">[System]</span> Ready. Click Microphone to speak or type command below.
+                    </div>
+                  ) : (
+                    terminalLogs.map((logLine, idx) => {
+                      let color = 'text-slate-400';
+                      if (logLine.includes('✓ Success')) color = 'text-emerald-400 font-semibold';
+                      else if (logLine.includes('❌') || logLine.includes('⚠️')) color = 'text-rose-400';
+                      else if (logLine.includes('🎙️ Listening')) color = 'text-violet-400';
+                      else if (logLine.includes('✍️ Transcribed')) color = 'text-blue-300';
+                      else if (logLine.includes('🤖 Gemini AI') || logLine.includes('🤖 Gemini:') || logLine.includes('⚙️ Action')) color = 'text-indigo-300';
+                      
+                      // Format system prefix in logs
+                      if (logLine.startsWith('[System]')) {
+                        return (
+                          <div key={idx} className={color}>
+                            <span className="text-violet-400 font-bold">[System]</span> {logLine.substring(8)}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={idx} className={color}>
+                          {logLine}
+                        </div>
+                      );
+                    })
+                  )}
                   
                   {/* Dynamic Terminal State line */}
                   {terminalState === 'listening' && (
@@ -710,7 +1022,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                           value={priceInput}
                           onChange={(e) => setPriceInput(e.target.value)}
                           placeholder="Price (e.g. 15.50)"
-                          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-600"
+                          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-600"
                           autoFocus
                           required
                         />
@@ -736,14 +1048,14 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                   value={manualCommand}
                   onChange={(e) => setManualCommand(e.target.value)}
                   placeholder="Or type inventory command manually..."
-                  className="flex-1 text-[11px] font-terminal rounded-xl bg-slate-950 border border-slate-800/80 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-600 focus:ring-1 focus:ring-violet-600/30"
+                  className="flex-1 text-[11px] font-terminal rounded-xl bg-slate-950 border border-violet-500/40 px-3.5 py-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20"
                 />
                 <button
                   type="submit"
                   disabled={!manualCommand.trim()}
-                  className="px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-xl text-xs font-semibold text-white transition duration-150 cursor-pointer"
+                  className="p-2.5 bg-slate-950/40 border border-violet-500/40 hover:bg-violet-600 hover:text-white rounded-xl text-violet-400 hover:shadow-[0_0_12px_rgba(139,92,246,0.3)] transition duration-200 cursor-pointer active:scale-95 flex items-center justify-center shrink-0 disabled:bg-slate-900 disabled:border-slate-800 disabled:text-slate-600 disabled:shadow-none"
                 >
-                  <Play className="w-3.5 h-3.5" />
+                  <Send className="w-3.5 h-3.5" />
                 </button>
               </form>
             </div>
@@ -857,7 +1169,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                                   
                                   <p className="text-[11px] text-slate-300 font-medium leading-relaxed flex items-start gap-2">
                                     <Mic className="w-3.5 h-3.5 text-violet-400 shrink-0 mt-0.5" />
-                                    <span>{log.calculationDetail}</span>
+                                    <span>{log.calculationDetail ? log.calculationDetail.replace(/₹/g, currencySymbol) : ''}</span>
                                   </p>
                                 </div>
                               );
@@ -880,64 +1192,145 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
           <section className="glass-card rounded-2xl p-5 border border-slate-800/60 flex-1 flex flex-col overflow-hidden">
             
             {/* Grid Header & Filters */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-violet-400" />
-                <h2 className="text-sm font-bold tracking-wide uppercase text-slate-400">
-                  Inventory Database
-                </h2>
-                {loading && (
-                  <RefreshCw className="w-3.5 h-3.5 text-slate-500 animate-spin ml-2" />
-                )}
+            <div className="relative bg-[#060814]/85 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-6 shadow-[0_20px_45px_-15px_rgba(0,0,0,0.9),_inset_0_1px_1px_rgba(255,255,255,0.03)] overflow-hidden mb-6 flex flex-col gap-6">
+              
+              {/* Subtle top/bottom gradient lines for premium neon glow */}
+              <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
+              <div className="absolute bottom-0 left-8 right-8 h-[1px] bg-gradient-to-r from-transparent via-violet-500/50 to-transparent" />
+
+              {/* Bottom purple blur glow behind the header */}
+              <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-[350px] h-20 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
+
+              {/* Row 1: Title block & Product Count */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full relative z-10">
+                <div className="flex items-center gap-4">
+                  {/* Database Icon Container */}
+                  <div className="relative w-14 h-14 flex items-center justify-center rounded-2xl bg-[#090b14] border border-cyan-500/30 shadow-[0_0_20px_-3px_rgba(34,211,238,0.4)] overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-tr from-violet-600/10 to-cyan-500/10" />
+                    <Database className="w-7 h-7 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black tracking-wider text-white uppercase flex items-center gap-1.5">
+                      INVENTORY <span className="text-violet-500">DATABASE</span>
+                      {loading && (
+                        <RefreshCw className="w-4 h-4 text-violet-400 animate-spin ml-1.5" />
+                      )}
+                    </h2>
+                    <p className="text-[10px] text-slate-400 font-medium tracking-widest mt-1.5 uppercase">
+                      OVERVIEW & STOCK MANAGEMENT
+                    </p>
+                  </div>
+                </div>
+
+                {/* CTAs and Products Count Badge on the right */}
+                <div className="flex items-center gap-3">
+                  {/* Add Product Button */}
+                  <button
+                    onClick={handleOpenAddModal}
+                    className="px-4.5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition duration-150 cursor-pointer border border-violet-500/25 active:scale-95 shadow-lg shadow-violet-900/30 whitespace-nowrap"
+                  >
+                    <Plus className="w-4 h-4 text-white" />
+                    Add Product
+                  </button>
+
+                  {/* Manual Reload Button */}
+                  <button
+                    onClick={fetchData}
+                    className="p-2.5 bg-slate-950/60 border border-slate-800/85 hover:bg-slate-900 text-slate-400 hover:text-white rounded-xl transition duration-150 cursor-pointer shrink-0 active:scale-95 shadow-md"
+                    title="Reload table"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+
+                  {/* Products Count Badge */}
+                  <div className="flex items-center gap-2.5 px-4.5 py-2.5 rounded-xl border border-violet-500/30 hover:border-violet-500/50 bg-slate-950/80 shadow-[inset_0_0_12px_rgba(139,92,246,0.15),_0_0_15px_rgba(139,92,246,0.1)] transition duration-200">
+                    <Package className="w-4 h-4 text-violet-400" />
+                    <span className="text-xs font-bold text-white uppercase tracking-widest font-mono">
+                      {products.length} {products.length === 1 ? 'PRODUCT' : 'PRODUCTS'}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Search Bar */}
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search product..."
-                    className="pl-9 pr-4 py-1.5 text-xs rounded-xl glass-input w-48 md:w-56 text-slate-200 placeholder:text-slate-500"
-                  />
+              {/* Row 2: Search, Filters & Actions side-by-side */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pt-1 relative z-10 w-full">
+                {/* Left Side: Search Bar & Divider */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3.5 flex-1">
+                  {/* Search Input */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 text-violet-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search product..."
+                      className="pl-10 pr-4 py-2.5 text-xs rounded-xl bg-slate-950/60 border border-slate-800/80 focus:border-violet-500 outline-none transition text-slate-200 placeholder:text-slate-500 w-full"
+                    />
+                  </div>
+                  
+                  {/* Vertical Divider (Hidden on mobile) */}
+                  <div className="hidden sm:block w-[1px] h-8 bg-slate-800/40 mx-2" />
+
+                  {/* Status Badges Selector Filter */}
+                  <div className="flex rounded-xl bg-slate-950/80 p-0.5 border border-slate-800/80 overflow-x-auto scrollbar-none w-fit">
+                    {(['all', 'in_stock', 'low_stock', 'out_of_stock'] as const).map(f => {
+                      const isActive = statusFilter === f;
+                      let label = '';
+                      let IconComponent = null;
+
+                      if (f === 'all') {
+                        label = 'ALL';
+                        IconComponent = LayoutGrid;
+                      } else if (f === 'in_stock') {
+                        label = 'IN STOCK';
+                        IconComponent = CheckCircle2;
+                      } else if (f === 'low_stock') {
+                        label = 'LOW STOCK';
+                        IconComponent = AlertTriangle;
+                      } else {
+                        label = 'OUT OF STOCK';
+                        IconComponent = XCircle;
+                      }
+
+                      let buttonStyle = 'text-slate-400 hover:text-white border border-transparent';
+                      if (isActive) {
+                        buttonStyle = 'bg-violet-600/15 border border-violet-500/40 shadow-[0_0_12px_rgba(139,92,246,0.3)] text-white';
+                      }
+
+                      let iconColor = 'text-violet-400';
+                      if (f === 'in_stock') iconColor = 'text-emerald-400';
+                      if (f === 'low_stock') iconColor = 'text-amber-500';
+                      if (f === 'out_of_stock') iconColor = 'text-rose-500';
+
+                      return (
+                        <button
+                          key={f}
+                          onClick={() => setStatusFilter(f)}
+                          className={`px-3.5 py-2 text-[10px] font-extrabold rounded-lg tracking-wider transition duration-150 cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${buttonStyle}`}
+                        >
+                          {IconComponent && <IconComponent className={`w-3.5 h-3.5 ${iconColor}`} />}
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                {/* Status Badges Selector Filter */}
-                <div className="flex rounded-xl bg-slate-950/80 p-0.5 border border-slate-800/80">
-                  {(['all', 'in_stock', 'low_stock', 'out_of_stock'] as const).map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setStatusFilter(f)}
-                      className={`px-3 py-1 text-[10px] font-bold rounded-lg uppercase tracking-wide transition duration-150 cursor-pointer ${
-                        statusFilter === f 
-                          ? 'bg-violet-600 text-white shadow-sm' 
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {f.replace('_', ' ')}
-                    </button>
-                  ))}
+                {/* Right Side: Action Buttons */}
+                <div className="flex items-center gap-3">
+                  {/* Import Ledger Button */}
+                  <button
+                    onClick={() => {
+                      setLedgerError('');
+                      setExtractedItems([]);
+                      setIsLedgerModalOpen(true);
+                    }}
+                    className="px-4 py-2.5 bg-slate-950/60 border border-slate-800/85 hover:bg-slate-900 text-slate-300 hover:text-white rounded-xl text-xs font-bold flex items-center gap-2 transition duration-150 cursor-pointer active:scale-95 shadow-md shadow-slate-950/20 whitespace-nowrap"
+                  >
+                    <UploadCloud className="w-4 h-4 text-violet-400" />
+                    Import Ledger
+                  </button>
                 </div>
-
-                {/* Manual Reload Button */}
-                <button
-                  onClick={fetchData}
-                  className="p-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white rounded-xl transition duration-150 cursor-pointer"
-                  title="Reload table"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Add Product Button */}
-                <button
-                  onClick={handleOpenAddModal}
-                  className="px-3.5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition duration-150 cursor-pointer border border-violet-500/30 active:scale-95 shadow-lg shadow-violet-900/20"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Product
-                </button>
               </div>
             </div>
 
@@ -988,26 +1381,53 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {filteredProducts.length === 0 ? (
+                  {products.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-20 text-center text-slate-400">
+                        <div className="flex flex-col items-center justify-center max-w-md mx-auto py-8">
+                          <div className="w-16 h-16 rounded-2xl bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 mb-4 animate-bounce">
+                            <UploadCloud className="w-8 h-8" />
+                          </div>
+                          <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">Initialize Your Inventory</h3>
+                          <p className="text-xs text-slate-500 mt-2 mb-6 leading-relaxed">
+                            Your inventory catalog is currently empty. Get started quickly by uploading a handwritten page or scanned sheet of your stock.
+                          </p>
+                          <button
+                            onClick={() => {
+                              setLedgerError('');
+                              setExtractedItems([]);
+                              setIsLedgerModalOpen(true);
+                            }}
+                            className="px-4.5 py-2.5 bg-violet-600 hover:bg-violet-750 text-white rounded-xl text-xs font-bold transition duration-150 cursor-pointer border border-violet-500/30 flex items-center gap-2 shadow-lg shadow-violet-900/20 active:scale-95"
+                          >
+                            <UploadCloud className="w-4 h-4" />
+                            Upload Ledger Sheet
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : filteredProducts.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-6 py-20 text-center text-slate-500 text-sm">
                         <Database className="w-10 h-10 mx-auto mb-3 opacity-25" />
-                        No product matches. Speak or type to add inventory.
+                        No product matches. Try searching for a different keyword.
                       </td>
                     </tr>
                   ) : (
-                    filteredProducts.map(product => (
-                      <tr 
-                        key={product._id} 
-                        className="hover:bg-slate-900/35 transition duration-150 group"
-                      >
+                    filteredProducts.map(product => {
+                      const isHighlighted = updatedProductIds.includes(product._id);
+                      return (
+                        <tr 
+                          key={product._id} 
+                          className={`transition duration-150 group ${isHighlighted ? 'highlight-row-purple' : 'hover:bg-slate-900/35'}`}
+                        >
                         <td className="px-5 py-4 text-sm font-semibold text-slate-200 capitalize max-w-[140px] md:max-w-[200px] lg:max-w-[260px]">
                           <div className="w-full overflow-x-auto whitespace-nowrap product-name-scrollbar pb-1.5">
                             {product.name}
                           </div>
                         </td>
                         <td className="px-5 py-4 text-sm font-mono text-slate-300 whitespace-nowrap">
-                          {product.price !== undefined && product.price !== null ? `₹${product.price.toFixed(2)}` : '—'}
+                          {product.price !== undefined && product.price !== null ? `${currencySymbol}${product.price.toFixed(2)}` : '—'}
                         </td>
                         <td className="px-5 py-4 text-sm font-mono font-medium text-slate-200 whitespace-nowrap">
                           <div className="flex items-center gap-2.5">
@@ -1073,8 +1493,9 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
                           </div>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    );
+                  })
+                )}
                 </tbody>
               </table>
             </div>
@@ -1103,8 +1524,222 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
           </section>
 
         </div>
-
       </main>
+
+      {/* Ledger OCR Upload Modal */}
+      {isLedgerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 overflow-y-auto">
+          <div 
+            className="glass-card w-full max-w-6xl p-6 rounded-3xl border border-slate-850 shadow-2xl relative flex flex-col gap-6 max-h-[90vh] overflow-hidden text-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setIsLedgerModalOpen(false)}
+              className="absolute top-4 right-4 p-1 rounded-lg hover:bg-slate-800 hover:text-white text-slate-400 transition cursor-pointer z-10"
+            >
+              <X className="w-4.5 h-4.5" />
+            </button>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 overflow-y-auto pr-1">
+              {/* Left Panel: Ledger File Uploader Dropzone (col-span-4) */}
+              <div className="lg:col-span-4 flex flex-col gap-6">
+                <section className="glass-card rounded-3xl p-6 border border-slate-800/60 relative overflow-hidden flex flex-col gap-5 h-full">
+                  <div className="flex items-center gap-2 mb-1">
+                    <UploadCloud className="w-5 h-5 text-cyan-400 animate-pulse" />
+                    <h2 className="text-sm font-black tracking-wider uppercase text-white">
+                      LEDGER <span className="text-cyan-400">SCANNER</span>
+                    </h2>
+                  </div>
+
+                  {ledgerError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 font-medium text-xs">
+                      {ledgerError}
+                    </div>
+                  )}
+
+                  {/* Dropzone or File summary */}
+                  {extractedItems.length === 0 && !isProcessingLedger ? (
+                    <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 hover:border-cyan-500/40 rounded-2xl p-6 bg-slate-950/40 transition-colors duration-200 relative group min-h-[300px]">
+                      <input
+                        type="file"
+                        onChange={handleLedgerFileUpload}
+                        accept="image/png, image/jpeg, image/jpg, image/webp, application/pdf"
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <UploadCloud className="w-12 h-12 text-slate-500 group-hover:text-cyan-400 transition-colors duration-200 mb-3" />
+                      <p className="text-xs font-semibold text-slate-350 text-center mb-1 leading-relaxed">
+                        Drag & drop your handwritten or printed ledger sheet here, or click to browse
+                      </p>
+                      <p className="text-[10px] text-slate-500 text-center mt-1">
+                        Supports PNG, JPG, JPEG, WEBP, or PDF up to 20MB
+                      </p>
+                    </div>
+                  ) : isProcessingLedger ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4 min-h-[300px]">
+                      <RefreshCw className="w-10 h-10 text-cyan-400 animate-spin" />
+                      <div className="text-center">
+                        <p className="text-xs font-semibold text-slate-300">Processing document with Gemini AI...</p>
+                        <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                          Extracting product names, stock quantities, units, and prices...
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center border border-slate-800 rounded-2xl p-6 bg-[#060814]/30 min-h-[300px] text-center gap-4">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-200">Ledger Sheet Processed</p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Successfully extracted {extractedItems.length} items. Edit details on the right review panel.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExtractedItems([]);
+                          setLedgerError('');
+                        }}
+                        className="px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:text-white rounded-xl text-slate-300 transition cursor-pointer font-bold text-[10px] uppercase tracking-wider"
+                      >
+                        Scan Another Sheet
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              {/* Right Panel: Extracted Items Review Grid (col-span-8) */}
+              <div className="lg:col-span-8 flex flex-col h-full min-h-[500px]">
+                <section className="glass-card rounded-2xl p-5 border border-slate-800/60 flex-1 flex flex-col overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-cyan-400" />
+                      <h2 className="text-sm font-black tracking-wider uppercase text-white">
+                        REVIEW & <span className="text-cyan-400">EDIT GRID</span>
+                      </h2>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest bg-slate-950 px-2.5 py-1 rounded border border-slate-900">
+                      {extractedItems.length} Extracted Items
+                    </span>
+                  </div>
+
+                  {extractedItems.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-center py-20 bg-[#06090f] border border-slate-855 rounded-xl">
+                      <Database className="w-10 h-10 mb-3 opacity-25" />
+                      <p className="text-xs">No items scanned yet.</p>
+                      <p className="text-[10px] opacity-75 mt-1 leading-relaxed">
+                        Upload your stock inventory document on the left panel. <br />
+                        The extracted list will display here for editing.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col justify-between overflow-hidden">
+                      <div className="flex-1 overflow-x-auto border border-slate-850 rounded-xl bg-[#06090f] overflow-y-auto max-h-[480px]">
+                        <table className="w-full text-left border-collapse table-auto text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 bg-slate-950/80 sticky top-0 z-10 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              <th className="px-4 py-3">Product Name</th>
+                              <th className="px-4 py-3 w-24">Quantity</th>
+                              <th className="px-4 py-3 w-28">Unit</th>
+                              <th className="px-4 py-3 w-32">Price ({currencySymbol})</th>
+                              <th className="px-4 py-3 text-right w-20">Remove</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-850 text-slate-300">
+                            {extractedItems.map((item, index) => (
+                              <tr key={index} className="hover:bg-slate-900/30">
+                                <td className="px-4 py-2 font-semibold">
+                                  <input
+                                    type="text"
+                                    value={item.name}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'name', e.target.value)}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 capitalize"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 font-mono">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={item.quantity}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'quantity', Number(e.target.value))}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5"
+                                  />
+                                </td>
+                                <td className="px-4 py-2">
+                                  <input
+                                    type="text"
+                                    value={item.unit}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'unit', e.target.value)}
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 lowercase"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 font-mono">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={item.price !== undefined ? item.price : ''}
+                                    onChange={(e) => handleUpdateExtractedItem(index, 'price', e.target.value === '' ? undefined : Number(e.target.value))}
+                                    placeholder="Not Set"
+                                    className="w-full bg-slate-950/50 border border-slate-900 focus:border-violet-600/50 text-slate-200 focus:outline-none rounded px-2.5 py-1.5 placeholder:text-slate-700"
+                                  />
+                                </td>
+                                <td className="px-4 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveExtractedItem(index)}
+                                    className="p-2 hover:text-rose-500 hover:bg-slate-900 rounded-lg transition duration-150 cursor-pointer text-slate-500"
+                                    title="Remove item"
+                                  >
+                                    <Trash2 className="w-4.5 h-4.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtractedItems([]);
+                            setLedgerError('');
+                          }}
+                          className="px-4 py-2.5 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs uppercase tracking-wider"
+                        >
+                          Reset List
+                        </button>
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExtractedItems([]);
+                              setLedgerError('');
+                              setIsLedgerModalOpen(false);
+                            }}
+                            className="px-4 py-2.5 bg-slate-900 border border-slate-850 hover:bg-slate-800 hover:text-white rounded-xl text-slate-350 transition cursor-pointer font-bold text-xs uppercase tracking-wider"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleImportLedgerItems}
+                            className="px-5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl transition cursor-pointer font-bold text-xs uppercase tracking-wider border border-violet-500/30 flex items-center gap-1.5 shadow-lg shadow-violet-900/20 active:scale-95"
+                          >
+                            Import {extractedItems.length} Products
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sleek Manual Add/Edit Product Modal */}
       {isModalOpen && (
@@ -1174,7 +1809,7 @@ export default function Dashboard({ user, onSignOut }: DashboardProps) {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Unit Price (₹)</label>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Unit Price ({currencySymbol})</label>
                 <input
                   type="number"
                   step="0.01"

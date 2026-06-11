@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { 
   auth, 
   googleProvider, 
@@ -9,23 +10,43 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut, 
-  onAuthStateChanged
+  onAuthStateChanged,
+  updateProfile,
+  sendPasswordResetEmail,
+  deleteUser
 } from 'firebase/auth';
-import { Database, Mail, Lock, LogIn, UserPlus, AlertCircle, Play } from 'lucide-react';
+
+import LandingPage from './components/LandingPage';
+import AuthPage from './components/AuthPage';
 import Dashboard from './components/Dashboard';
+import SettingsPage from './components/SettingsPage';
 
 interface AppUser {
   uid: string;
   email: string | null;
   displayName: string | null;
+  shopName?: string;
   isDemo?: boolean;
+  category?: string;
+  currency?: string;
+  language?: string;
 }
+
+// Helper to encode a mock JWT on the client side for local sandbox user profiles
+const encodeMockJwt = (uid: string, email: string) => {
+  try {
+    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const payload = btoa(JSON.stringify({ user_id: uid, email: email, name: email.split('@')[0] }));
+    const signature = 'mock-signature';
+    return `${header}.${payload}.${signature}`;
+  } catch (err) {
+    console.error('Error encoding mock token:', err);
+    return 'mock-token-123';
+  }
+};
 
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null);
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -46,10 +67,18 @@ export default function App() {
         const token = await firebaseUser.getIdToken();
         localStorage.setItem('vocalize_token', token);
         
+        // Load custom settings
+        const customSettingsStr = localStorage.getItem('vocalize_settings_' + firebaseUser.uid);
+        const customSettings = customSettingsStr ? JSON.parse(customSettingsStr) : {};
+
         setUser({
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          displayName: firebaseUser.displayName
+          displayName: firebaseUser.displayName || customSettings.merchantName || null,
+          shopName: customSettings.shopName || 'My Store',
+          category: customSettings.category || 'General Retail',
+          currency: customSettings.currency || 'INR',
+          language: customSettings.language || 'English (Standard)'
         });
       } else {
         localStorage.removeItem('vocalize_token');
@@ -61,33 +90,163 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleEmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleEmailAuth = async (
+    emailInput: string,
+    passwordInput: string,
+    mode: 'signin' | 'signup',
+    extra: { merchantName: string; shopName: string; category: string; currency: string; language: string }
+  ) => {
     setError(null);
 
-    if (!email || !password) {
+    if (!emailInput || !passwordInput) {
       setError('Please fill in all fields.');
       return;
     }
 
+    if (passwordInput.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    // Local Sandbox auth simulation when Firebase is not configured
+    if (!isConfigured) {
+      try {
+        const storedUsersStr = localStorage.getItem('vocalize_mock_users');
+        const mockUsers = storedUsersStr ? JSON.parse(storedUsersStr) : [];
+
+        if (mode === 'signup') {
+          if (!extra.merchantName.trim()) {
+            setError('Please fill in your Full Name.');
+            return;
+          }
+          if (!extra.shopName.trim()) {
+            setError('Please fill in the Shop Name.');
+            return;
+          }
+
+          const userExists = mockUsers.some((u: any) => u.email.toLowerCase() === emailInput.toLowerCase());
+          if (userExists) {
+            setError('Account already exists in local sandbox database. Please sign in instead.');
+            return;
+          }
+
+          const newUser = {
+            uid: 'mock_u_' + Math.random().toString(36).substring(2, 11),
+            email: emailInput.toLowerCase().trim(),
+            password: passwordInput,
+            displayName: extra.merchantName,
+            shopName: extra.shopName,
+            category: extra.category,
+            currency: extra.currency,
+            language: extra.language
+          };
+          mockUsers.push(newUser);
+          localStorage.setItem('vocalize_mock_users', JSON.stringify(mockUsers));
+
+          const token = encodeMockJwt(newUser.uid, newUser.email);
+          localStorage.setItem('vocalize_token', token);
+
+          const appUser: AppUser = {
+            uid: newUser.uid,
+            email: newUser.email,
+            displayName: newUser.displayName,
+            shopName: newUser.shopName,
+            category: newUser.category,
+            currency: newUser.currency,
+            language: newUser.language
+          };
+          localStorage.setItem('vocalize_mock_user', JSON.stringify(appUser));
+          setUser(appUser);
+        } else {
+          const foundUser = mockUsers.find(
+            (u: any) => u.email.toLowerCase() === emailInput.toLowerCase() && u.password === passwordInput
+          );
+          if (!foundUser) {
+            setError('Invalid email or password in local sandbox database.');
+            return;
+          }
+
+          const token = encodeMockJwt(foundUser.uid, foundUser.email);
+          localStorage.setItem('vocalize_token', token);
+
+          const appUser: AppUser = {
+            uid: foundUser.uid,
+            email: foundUser.email,
+            displayName: foundUser.displayName || foundUser.email.split('@')[0],
+            shopName: foundUser.shopName || 'My Store',
+            category: foundUser.category || 'General Retail',
+            currency: foundUser.currency || 'INR',
+            language: foundUser.language || 'English (Standard)'
+          };
+          localStorage.setItem('vocalize_mock_user', JSON.stringify(appUser));
+          setUser(appUser);
+        }
+      } catch (err: any) {
+        console.error(err);
+        setError('Error simulating sandbox account operation.');
+      }
+      return;
+    }
+
+    // Real Firebase Auth flow
     try {
-      if (authMode === 'signin') {
-        const credentials = await signInWithEmailAndPassword(auth, email, password);
+      if (mode === 'signin') {
+        const credentials = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
         const token = await credentials.user.getIdToken();
         localStorage.setItem('vocalize_token', token);
+        
+        // Load custom settings
+        const customSettingsStr = localStorage.getItem('vocalize_settings_' + credentials.user.uid);
+        const customSettings = customSettingsStr ? JSON.parse(customSettingsStr) : {};
+
         setUser({
           uid: credentials.user.uid,
           email: credentials.user.email,
-          displayName: credentials.user.displayName
+          displayName: credentials.user.displayName || customSettings.merchantName || null,
+          shopName: customSettings.shopName || 'My Store',
+          category: customSettings.category || 'General Retail',
+          currency: customSettings.currency || 'INR',
+          language: customSettings.language || 'English (Standard)'
         });
       } else {
-        const credentials = await createUserWithEmailAndPassword(auth, email, password);
+        if (!extra.merchantName.trim()) {
+          setError('Please fill in your Full Name.');
+          return;
+        }
+        if (!extra.shopName.trim()) {
+          setError('Please fill in the Shop Name.');
+          return;
+        }
+
+        const credentials = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
         const token = await credentials.user.getIdToken();
         localStorage.setItem('vocalize_token', token);
+        
+        // Update display name
+        try {
+          await updateProfile(credentials.user, { displayName: extra.merchantName });
+        } catch (err) {
+          console.error('Error updating Firebase display name:', err);
+        }
+
+        // Save settings locally
+        const settings = { 
+          merchantName: extra.merchantName,
+          shopName: extra.shopName, 
+          category: extra.category, 
+          currency: extra.currency, 
+          language: extra.language 
+        };
+        localStorage.setItem('vocalize_settings_' + credentials.user.uid, JSON.stringify(settings));
+
         setUser({
           uid: credentials.user.uid,
           email: credentials.user.email,
-          displayName: credentials.user.displayName
+          displayName: extra.merchantName,
+          shopName: extra.shopName,
+          category: extra.category,
+          currency: extra.currency,
+          language: extra.language
         });
       }
     } catch (err: any) {
@@ -102,10 +261,18 @@ export default function App() {
       const result = await signInWithPopup(auth, googleProvider);
       const token = await result.user.getIdToken();
       localStorage.setItem('vocalize_token', token);
+      
+      const customSettingsStr = localStorage.getItem('vocalize_settings_' + result.user.uid);
+      const customSettings = customSettingsStr ? JSON.parse(customSettingsStr) : {};
+
       setUser({
         uid: result.user.uid,
         email: result.user.email,
-        displayName: result.user.displayName
+        displayName: result.user.displayName || customSettings.merchantName || null,
+        shopName: customSettings.shopName || 'My Store',
+        category: customSettings.category || 'General Retail',
+        currency: customSettings.currency || 'INR',
+        language: customSettings.language || 'English (Standard)'
       });
     } catch (err: any) {
       console.error(err);
@@ -118,7 +285,11 @@ export default function App() {
       uid: 'mock_user_123',
       email: 'demo_owner@vocalize.com',
       displayName: 'Demo Store Owner',
-      isDemo: true
+      shopName: 'Demo Store',
+      isDemo: true,
+      category: 'General Retail',
+      currency: 'INR',
+      language: 'English (Standard)'
     };
     localStorage.setItem('vocalize_mock_user', JSON.stringify(demoUser));
     localStorage.setItem('vocalize_token', 'mock-token-123');
@@ -126,7 +297,7 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    if (user?.isDemo) {
+    if (user?.isDemo || !isConfigured) {
       localStorage.removeItem('vocalize_mock_user');
       localStorage.removeItem('vocalize_token');
       setUser(null);
@@ -142,12 +313,158 @@ export default function App() {
     }
   };
 
+  const handleUpdateProfile = async (updatedData: {
+    displayName: string;
+    shopName: string;
+    category: string;
+    currency: string;
+    language: string;
+  }) => {
+    if (!user) return;
+
+    if (user.isDemo) {
+      const updatedUser = {
+        ...user,
+        ...updatedData
+      };
+      localStorage.setItem('vocalize_mock_user', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      return;
+    }
+
+    if (!isConfigured) {
+      try {
+        const storedUsersStr = localStorage.getItem('vocalize_mock_users');
+        const mockUsers = storedUsersStr ? JSON.parse(storedUsersStr) : [];
+        const userIndex = mockUsers.findIndex((u: any) => u.uid === user.uid);
+        
+        if (userIndex !== -1) {
+          mockUsers[userIndex] = {
+            ...mockUsers[userIndex],
+            displayName: updatedData.displayName,
+            shopName: updatedData.shopName,
+            category: updatedData.category,
+            currency: updatedData.currency,
+            language: updatedData.language
+          };
+          localStorage.setItem('vocalize_mock_users', JSON.stringify(mockUsers));
+        }
+
+        const updatedUser = {
+          ...user,
+          ...updatedData
+        };
+        localStorage.setItem('vocalize_mock_user', JSON.stringify(updatedUser));
+        setUser(updatedUser);
+      } catch (err) {
+        console.error('Error updating mock profile:', err);
+        throw new Error('Failed to update mock profile');
+      }
+      return;
+    }
+
+    try {
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, { displayName: updatedData.displayName });
+        
+        const settings = {
+          merchantName: updatedData.displayName,
+          shopName: updatedData.shopName,
+          category: updatedData.category,
+          currency: updatedData.currency,
+          language: updatedData.language
+        };
+        localStorage.setItem('vocalize_settings_' + user.uid, JSON.stringify(settings));
+
+        setUser({
+          ...user,
+          ...updatedData
+        });
+      }
+    } catch (err: any) {
+      console.error('Error updating Firebase profile:', err);
+      throw new Error(err.message.replace('Firebase: ', ''));
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!user || !user.email) {
+      throw new Error('No user is currently signed in.');
+    }
+
+    if (user.isDemo || !isConfigured) {
+      return { success: true, message: `[Sandbox Simulator] Password reset email sent to ${user.email}.` };
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      return { success: true, message: `Password reset email sent to ${user.email}.` };
+    } catch (err: any) {
+      console.error('Error sending reset email:', err);
+      throw new Error(err.message.replace('Firebase: ', ''));
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user) return { success: false };
+    const uid = user.uid;
+
+    try {
+      const token = user.isDemo ? 'mock-token-123' : localStorage.getItem('vocalize_token');
+      const response = await fetch('/api/clear-all', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to wipe data from backend database.');
+      }
+
+      localStorage.removeItem('vocalize_settings_' + uid);
+
+      if (user.isDemo) {
+        localStorage.removeItem('vocalize_mock_user');
+        localStorage.removeItem('vocalize_token');
+        setUser(null);
+        return { success: true };
+      }
+
+      if (!isConfigured) {
+        const storedUsersStr = localStorage.getItem('vocalize_mock_users');
+        if (storedUsersStr) {
+          const mockUsers = JSON.parse(storedUsersStr);
+          const updatedMockUsers = mockUsers.filter((u: any) => u.uid !== uid);
+          localStorage.setItem('vocalize_mock_users', JSON.stringify(updatedMockUsers));
+        }
+        localStorage.removeItem('vocalize_mock_user');
+        localStorage.removeItem('vocalize_token');
+        setUser(null);
+        return { success: true };
+      }
+
+      if (auth.currentUser) {
+        await deleteUser(auth.currentUser);
+      }
+      localStorage.removeItem('vocalize_token');
+      setUser(null);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Error deleting account:', err);
+      if (err.code === 'auth/requires-recent-login' || err.message?.includes('requires-recent-login')) {
+        throw new Error('This operation is sensitive and requires recent authentication. Please sign out, sign in again, and then try deleting your account.');
+      }
+      throw new Error(err.message || 'Error occurred while deleting account.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#090d16] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-violet-600 to-fuchsia-600 animate-spin flex items-center justify-center shadow-lg shadow-violet-500/20">
-            <Database className="w-6 h-6 text-white" />
+            <div className="w-6 h-6 rounded-lg bg-[#090d16] animate-pulse" />
           </div>
           <p className="text-xs font-semibold tracking-wider text-slate-400 font-terminal uppercase animate-pulse">
             Booting Vocalize system...
@@ -157,182 +474,89 @@ export default function App() {
     );
   }
 
-  if (user) {
-    return <Dashboard user={user} onSignOut={handleSignOut} />;
-  }
-
   return (
-    <div className="min-h-screen bg-[#090d16] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-      
-      {/* Dynamic Background Gradients */}
-      <div className="absolute top-1/4 left-1/4 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-violet-600/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 translate-x-1/2 translate-y-1/2 w-96 h-96 bg-fuchsia-600/10 rounded-full blur-[120px] pointer-events-none" />
-
-      <div className="w-full max-w-md relative z-10 flex flex-col items-center gap-6">
-        
-        {/* Logo and Brand */}
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="p-3 bg-gradient-to-tr from-violet-600 to-fuchsia-600 rounded-2xl shadow-xl shadow-violet-500/25">
-            <Database className="w-8 h-8 text-white animate-pulse" />
-          </div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-fuchsia-400 to-indigo-300">
-            Vocalize
-          </h1>
-          <p className="text-xs text-slate-500 font-semibold tracking-widest uppercase">
-            AI-POWERED VOICE INVENTORY LOG
-          </p>
-        </div>
-
-        {/* Demo Fallback Alert Block */}
-        {!isConfigured && (
-          <div className="w-full glass-card p-4 border-l-3 border-l-amber-500 rounded-xl flex gap-3 text-left">
-            <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-bold text-amber-400">Firebase Config Missing</p>
-              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                The application is running in Mock Mode because Firebase is not configured in your environment variables. 
-              </p>
-              <button
-                onClick={launchDemoMode}
-                className="mt-3.5 w-full flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-violet-600/10 hover:shadow-violet-600/20 transition duration-200 cursor-pointer"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                Launch Demo Dashboard
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Authentication Card (only if Firebase is configured) */}
-        {isConfigured && (
-          <div className="w-full glass-card rounded-2xl p-6 border border-slate-800/80">
-            
-            {/* Tab Selection */}
-            <div className="grid grid-cols-2 rounded-xl bg-slate-950 p-1 border border-slate-900 mb-6">
-              <button
-                onClick={() => setAuthMode('signin')}
-                className={`py-2 text-xs font-bold rounded-lg uppercase tracking-wider transition ${
-                  authMode === 'signin' 
-                    ? 'bg-violet-600 text-white shadow-md' 
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                onClick={() => setAuthMode('signup')}
-                className={`py-2 text-xs font-bold rounded-lg uppercase tracking-wider transition ${
-                  authMode === 'signup' 
-                    ? 'bg-violet-600 text-white shadow-md' 
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Sign Up
-              </button>
-            </div>
-
-            {error && (
-              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl text-[11px] flex gap-2 items-center">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {/* Form */}
-            <form onSubmit={handleEmailAuth} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@store.com"
-                    className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl glass-input text-slate-200"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5 text-left">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pl-1">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl glass-input text-slate-200"
-                    required
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-violet-500/15 transition duration-150 cursor-pointer"
-              >
-                {authMode === 'signin' ? (
-                  <>
-                    <LogIn className="w-4 h-4" />
-                    Access Account
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    Register Account
-                  </>
-                )}
-              </button>
-            </form>
-
-            <div className="relative my-6 text-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-800" />
-              </div>
-              <span className="relative px-3 bg-[#0c121e] text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                Or continue with
-              </span>
-            </div>
-
-            {/* Google OAuth Button */}
-            <button
-              onClick={handleGoogleSignIn}
-              type="button"
-              className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-semibold transition duration-150 cursor-pointer"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-              Sign In with Google
-            </button>
-
-            {/* Quick Demo Bypass (even when configured) */}
-            <div className="mt-4 pt-4 border-t border-slate-900 text-center">
-              <button
-                onClick={launchDemoMode}
-                className="text-[10px] text-slate-500 hover:text-violet-400 underline font-semibold transition"
-              >
-                Or launch sandbox demo directly
-              </button>
-            </div>
-
-          </div>
-        )}
-
-        <p className="text-[10px] text-slate-600 font-medium">
-          Protected by Firebase Authentication & Gemini AI Encryption
-        </p>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route 
+          path="/" 
+          element={
+            <LandingPage 
+              onLaunchDemo={launchDemoMode} 
+              user={user} 
+              onSignOut={handleSignOut} 
+            />
+          } 
+        />
+        <Route 
+          path="/login" 
+          element={
+            user ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <AuthPage 
+                authMode="signin"
+                onEmailAuth={handleEmailAuth}
+                onGoogleSignIn={handleGoogleSignIn}
+                onLaunchDemo={launchDemoMode}
+                isConfigured={isConfigured}
+                error={error}
+                setError={setError}
+              />
+            )
+          } 
+        />
+        <Route 
+          path="/signup" 
+          element={
+            user ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <AuthPage 
+                authMode="signup"
+                onEmailAuth={handleEmailAuth}
+                onGoogleSignIn={handleGoogleSignIn}
+                onLaunchDemo={launchDemoMode}
+                isConfigured={isConfigured}
+                error={error}
+                setError={setError}
+              />
+            )
+          } 
+        />
+        <Route 
+          path="/dashboard" 
+          element={
+            user ? (
+              <Dashboard 
+                user={user} 
+                onSignOut={handleSignOut} 
+              />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/settings" 
+          element={
+            user ? (
+              <SettingsPage 
+                user={user} 
+                onSignOut={handleSignOut} 
+                onUpdateUser={handleUpdateProfile}
+                onPasswordReset={handlePasswordReset}
+                onDeleteAccount={handleDeleteAccount}
+              />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } 
+        />
+        <Route 
+          path="*" 
+          element={<Navigate to="/" replace />} 
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }
